@@ -293,7 +293,6 @@ async def feed(request):
 
 
 async def substack_feed(request):
-    check_token(request)
     xml = await substack.feed_xml(request.app.state.http, request.path_params["host"])
     return Response(xml, media_type="application/rss+xml")
 
@@ -356,5 +355,5 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message
 app = Starlette(lifespan=lifespan, routes=[
     Route("/{token}/feed.xml", feed),
     Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
-    Route("/{token}/substack/{host}/feed.xml", substack_feed),
+    Route("/substack/{host}/feed.xml", substack_feed),
 ])

@@ -12,6 +12,7 @@ from email.utils import formatdate
 from xml.sax.saxutils import escape
 
 import feedparser
+from starlette.exceptions import HTTPException
 
 POSTS_IN_FEED = 30
 FEED_REFRESH_SECONDS = 600
@@ -33,8 +34,10 @@ async def audio_size(http, url):
 
 async def build_feed(http, host):
     async with http.get(f"https://{host}/feed") as response:
-        response.raise_for_status()
-        channel = feedparser.parse(await response.read()).feed
+        channel = feedparser.parse(await response.read()).feed if response.ok else {}
+    # The feed is public, so it only serves real Substack publications.
+    if channel.get("generator") != "Substack":
+        raise HTTPException(404, f"{host} is not a Substack publication")
     async with http.get(f"https://{host}/api/v1/posts", params={"limit": POSTS_IN_FEED}) as response:
         response.raise_for_status()
         posts = await response.json()
