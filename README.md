@@ -19,14 +19,14 @@ Pocket Casts starts playback after buffering about 512 KB, so the first listen o
 | `FEED_TOKEN` | Secret path segment; the feed is `https://<host>/<token>/feed.xml` |
 | `STORE_DIR` | Directory for article text and audio |
 
-Run locally with `uv run app.py`.
+Run locally with `uv run hypercorn app:app`.
 
 ## Deploy
 
 Cloud Run, one instance, with a Cloud Storage bucket mounted at `/store`:
 
 ```bash
-gcloud run deploy articlecast --source . --region us-west1 \
+gcloud run deploy articlecast --source . --region us-west1 --use-http2 \
   --max-instances 1 --no-cpu-throttling --timeout 3600 --allow-unauthenticated \
   --add-volume name=store,type=cloud-storage,bucket=$BUCKET \
   --add-volume-mount volume=store,mount-path=/store \
@@ -34,4 +34,4 @@ gcloud run deploy articlecast --source . --region us-west1 \
   --set-secrets GEMINI_API_KEY=gemini-api-key:latest,FEED_TOKEN=feed-token:latest
 ```
 
-One instance keeps every request for an episode on the same synthesis. CPU stays allocated so synthesis finishes after the phone disconnects.
+One instance keeps every request for an episode on the same synthesis. CPU stays allocated so synthesis finishes after the phone disconnects. End-to-end HTTP/2, served by Hypercorn, is required: over HTTP/1 Cloud Run buffers any response that declares its size, and Pocket Casts only plays responses that do.

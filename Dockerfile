@@ -4,4 +4,4 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 COPY app.py feeds.txt ./
-CMD ["uv", "run", "--no-sync", "app.py"]
+CMD ["sh", "-c", "exec uv run --no-sync hypercorn app:app --bind 0.0.0.0:$PORT"]

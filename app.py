@@ -7,6 +7,7 @@ get the finished file.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -21,9 +22,12 @@ from xml.sax.saxutils import escape
 import aiohttp
 import feedparser
 import trafilatura
-from aiohttp import web
 from google import genai
 from google.genai import types
+from starlette.applications import Starlette
+from starlette.exceptions import HTTPException
+from starlette.responses import FileResponse, Response, StreamingResponse
+from starlette.routing import Route
 
 STORE = Path(os.environ["STORE_DIR"])
 TOKEN = os.environ["FEED_TOKEN"]
@@ -275,79 +279,73 @@ def feed_xml(base, articles):
 
 
 def check_token(request):
-    if request.match_info["token"] != TOKEN:
-        raise web.HTTPNotFound()
+    if request.path_params["token"] != TOKEN:
+        raise HTTPException(404)
 
 
 async def feed(request):
     check_token(request)
-    articles = await request.app["library"].recent(request.app["http"])
-    return web.Response(text=feed_xml(f"https://{request.host}", articles), content_type="application/rss+xml")
+    state = request.app.state
+    articles = await state.library.recent(state.http)
+    return Response(feed_xml(f"https://{request.url.netloc}", articles), media_type="application/rss+xml")
+
+
+def byte_range(header, size):
+    """Parses a single-range `bytes=` header into a half-open [start, stop) range."""
+    if not header:
+        return 0, size
+    first, _, last = header.removeprefix("bytes=").split(",")[0].strip().partition("-")
+    if not first:
+        return max(0, size - int(last)), size
+    return int(first), min(int(last) + 1, size) if last else size
 
 
 async def audio(request):
     check_token(request)
-    article_id = request.match_info["id"]
-    user_agent = request.headers.get("User-Agent", "")
-    log.info("%s %s range=%s ua=%r", request.method, article_id, request.headers.get("Range"), user_agent)
+    article_id = request.path_params["id"]
+    user_agent = request.headers.get("user-agent", "")
+    range_header = request.headers.get("range")
+    log.info("%s %s range=%s ua=%r", request.method, article_id, range_header, user_agent)
     path = audio_path(article_id)
     if path.exists():
-        return web.FileResponse(path, headers={"Content-Type": "audio/mpeg"})
+        return FileResponse(path, media_type="audio/mpeg")
     if not article_path(article_id).exists():
-        raise web.HTTPNotFound()
+        raise HTTPException(404)
     article = json.loads(article_path(article_id).read_text())
-    syntheses = request.app["syntheses"]
+    syntheses = request.app.state.syntheses
     synthesis = syntheses.get(article_id)
     if request.method == "GET" and (synthesis is None or synthesis.failed):
         if user_agent not in SYNTHESIS_USER_AGENTS:
             log.warning("refused synthesis of %s for %r", article_id, user_agent)
-            raise web.HTTPForbidden()
-        synthesis = syntheses[article_id] = Synthesis(article, request.app["silent_frame"])
+            raise HTTPException(403)
+        synthesis = syntheses[article_id] = Synthesis(article, request.app.state.silent_frame)
     size = article["size"]
-    requested = request.http_range
-    start = requested.start or 0
-    if start < 0:
-        start += size
-    stop = min(requested.stop or size, size)
+    start, stop = byte_range(range_header, size)
     if not 0 <= start < stop:
-        raise web.HTTPRequestRangeNotSatisfiable(headers={"Content-Range": f"bytes */{size}"})
-    response = web.StreamResponse(status=206 if "Range" in request.headers else 200)
-    response.content_type = "audio/mpeg"
-    response.content_length = stop - start
-    response.headers["Accept-Ranges"] = "bytes"
-    if "Range" in request.headers:
-        response.headers["Content-Range"] = f"bytes {start}-{stop - 1}/{size}"
-    await response.prepare(request)
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    headers = {"Content-Length": str(stop - start), "Accept-Ranges": "bytes"}
+    if range_header:
+        headers["Content-Range"] = f"bytes {start}-{stop - 1}/{size}"
+    status = 206 if range_header else 200
     if request.method == "HEAD":
-        return response
-    async for piece in synthesis.read(start, stop):
-        await response.write(piece)
-    await response.write_eof()
-    return response
+        return Response(status_code=status, headers=headers, media_type="audio/mpeg")
+    return StreamingResponse(synthesis.read(start, stop), status_code=status, headers=headers, media_type="audio/mpeg")
 
 
-async def startup(app):
+@contextlib.asynccontextmanager
+async def lifespan(app):
     (STORE / "articles").mkdir(parents=True, exist_ok=True)
     (STORE / "audio").mkdir(parents=True, exist_ok=True)
-    app["silent_frame"] = await encode_silent_frame()
-    app["http"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), headers={"User-Agent": "Mozilla/5.0 (compatible; Articlecast)"})
-    app["library"] = Library()
-    app["syntheses"] = {}
+    app.state.silent_frame = await encode_silent_frame()
+    app.state.library = Library()
+    app.state.syntheses = {}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), headers={"User-Agent": "Mozilla/5.0 (compatible; Articlecast)"}) as http:
+        app.state.http = http
+        yield
 
 
-async def cleanup(app):
-    await app["http"].close()
-
-
-def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    app = web.Application()
-    app.on_startup.append(startup)
-    app.on_cleanup.append(cleanup)
-    app.router.add_get("/{token}/feed.xml", feed)
-    app.router.add_get("/{token}/audio/{id}.mp3", audio)
-    web.run_app(app, port=int(os.environ.get("PORT", 8080)), access_log=None)
-
-
-if __name__ == "__main__":
-    main()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+app = Starlette(lifespan=lifespan, routes=[
+    Route("/{token}/feed.xml", feed),
+    Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
+])

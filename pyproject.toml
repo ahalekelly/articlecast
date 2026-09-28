@@ -6,6 +6,8 @@ dependencies = [
     "aiohttp>=3.14.3",
     "feedparser>=6.0.14",
     "google-genai>=2.25.0",
+    "hypercorn>=0.18.0",
+    "starlette>=1.7.0",
     "trafilatura>=2.2.0",
 ]
 
