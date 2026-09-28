@@ -8,3 +8,6 @@ dependencies = [
     "google-genai>=2.25.0",
     "trafilatura>=2.2.0",
 ]
+
+[tool.uv]
+exclude-newer = "3 days"
