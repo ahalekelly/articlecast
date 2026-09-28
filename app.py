@@ -29,6 +29,8 @@ from starlette.exceptions import HTTPException
 from starlette.responses import FileResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+import substack
+
 STORE = Path(os.environ["STORE_DIR"])
 TOKEN = os.environ["FEED_TOKEN"]
 FEEDS = [line.strip() for line in (Path(__file__).parent / "feeds.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
@@ -290,6 +292,12 @@ async def feed(request):
     return Response(feed_xml(f"https://{request.url.netloc}", articles), media_type="application/rss+xml")
 
 
+async def substack_feed(request):
+    check_token(request)
+    xml = await substack.feed_xml(request.app.state.http, request.path_params["host"])
+    return Response(xml, media_type="application/rss+xml")
+
+
 def byte_range(header, size):
     """Parses a single-range `bytes=` header into a half-open [start, stop) range."""
     if not header:
@@ -348,4 +356,5 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message
 app = Starlette(lifespan=lifespan, routes=[
     Route("/{token}/feed.xml", feed),
     Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
+    Route("/{token}/substack/{host}/feed.xml", substack_feed),
 ])

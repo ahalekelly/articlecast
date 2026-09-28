@@ -11,6 +11,10 @@ A private podcast feed of articles from RSS feeds, read aloud by Gemini 3.8 Flas
 
 The first listen of an article starts about 3 seconds after you tap play. Pocket Casts imports at most 10 new episodes per feed refresh.
 
+## Substack feeds
+
+`https://<host>/<token>/substack/<publication host>/feed.xml` is a separate feed for one Substack, for example `.../substack/www.astralcodexten.com/feed.xml`. Its episodes link directly to the text-to-speech MP3s Substack makes for its app, found through the undocumented `/api/v1/posts` API, so they cost nothing and play instantly. Posts without that audio, such as paid-only posts, are left out.
+
 ## Configuration
 
 | Variable | Meaning |
