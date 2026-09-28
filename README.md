@@ -1,10 +1,10 @@
 # Articlecast
 
-A private podcast feed of articles from RSS feeds, read aloud by Gemini 3.8 Flash TTS. Audio is generated only when you play or download an episode in Pocket Casts, so unplayed articles cost nothing.
+Private podcast feeds of articles from RSS feeds, read aloud by Gemini 3.8 Flash TTS. Audio is generated only when you play or download an episode in Pocket Casts, so unplayed articles cost nothing.
 
 ## How it works
 
-- The feed lists the newest articles from `feeds.txt`, with text extracted by trafilatura and an estimated audio size.
+- `https://<host>/<token>/rss/feed.xml?url=<RSS feed URL>` is a podcast of one RSS feed's newest articles, with text extracted by trafilatura and an estimated audio size.
 - The first download from the Pocket Casts app starts synthesis. Audio streams to the phone as Gemini generates it, several paragraphs at a time, and is padded with silence to the estimated size.
 - Later downloads get the finished MP3.
 - Only the `Pocket Casts` user agent can start synthesis. Pocket Casts' servers download every new episode as `WordPress.com - Audio`, and would otherwise synthesize everything.
@@ -20,7 +20,7 @@ The first listen of an article starts about 3 seconds after you tap play. Pocket
 | Variable | Meaning |
 |---|---|
 | `GEMINI_API_KEY` | Gemini API key |
-| `FEED_TOKEN` | Secret path segment; the feed is `https://<host>/<token>/feed.xml` |
+| `FEED_TOKEN` | Secret path segment in RSS feed and audio URLs |
 | `STORE_DIR` | Directory for article text and audio |
 
 Run locally with `uv run hypercorn app:app`.

@@ -1,2 +1,0 @@
-# One RSS or Atom feed URL per line.
-https://www.construction-physics.com/feed

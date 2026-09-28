@@ -1,6 +1,6 @@
-"""Podcast feed of articles from RSS feeds, read aloud by Gemini on first download.
+"""Podcast feeds of articles from RSS feeds, read aloud by Gemini on first download.
 
-The feed lists every recent article with an estimated audio size. Nothing is synthesized
+Each feed lists every recent article with an estimated audio size. Nothing is synthesized
 until Pocket Casts on a phone downloads an episode. The first download streams audio as
 Gemini generates it, padded with silence to the size the feed promised. Later downloads
 get the finished file.
@@ -33,7 +33,6 @@ import substack
 
 STORE = Path(os.environ["STORE_DIR"])
 TOKEN = os.environ["FEED_TOKEN"]
-FEEDS = [line.strip() for line in (Path(__file__).parent / "feeds.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
 gemini = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 MODEL = "gemini-3.8-flash-tts"
@@ -87,30 +86,27 @@ async def encode_silent_frame():
 
 
 class Library:
-    """Recent articles from the configured feeds, with their extracted text."""
+    """Recent articles from each requested RSS feed, with their extracted text."""
 
     def __init__(self):
-        self.articles = []
-        self.refreshed = 0.0
+        self.feeds = {}  # feed URL -> (time refreshed, channel, articles)
         self.lock = asyncio.Lock()
 
-    async def recent(self, http):
+    async def recent(self, http, feed_url):
         async with self.lock:
-            if time.time() - self.refreshed > FEED_REFRESH_SECONDS:
-                self.articles = await self.refresh(http)
-                self.refreshed = time.time()
-            return self.articles
+            if feed_url not in self.feeds or time.time() - self.feeds[feed_url][0] > FEED_REFRESH_SECONDS:
+                self.feeds[feed_url] = (time.time(), *await self.refresh(http, feed_url))
+            return self.feeds[feed_url][1:]
 
-    async def refresh(self, http):
+    async def refresh(self, http, feed_url):
+        async with http.get(feed_url) as response:
+            response.raise_for_status()
+            parsed = feedparser.parse(await response.read())
         entries = []
-        for feed_url in FEEDS:
-            async with http.get(feed_url) as response:
-                response.raise_for_status()
-                parsed = feedparser.parse(await response.read())
-            for entry in parsed.entries:
-                published = entry.get("published_parsed") or entry.get("updated_parsed")
-                entries.append({"url": entry.link, "title": entry.get("title", entry.link), "feed": parsed.feed.get("title", feed_url),
-                                "published": timegm(published) if published else time.time()})
+        for entry in parsed.entries:
+            published = entry.get("published_parsed") or entry.get("updated_parsed")
+            entries.append({"url": entry.link, "title": entry.get("title", entry.link),
+                            "published": timegm(published) if published else time.time()})
         entries.sort(key=lambda e: e["published"], reverse=True)
         extract_slots = asyncio.Semaphore(8)
 
@@ -134,7 +130,7 @@ class Library:
         for entry, result in zip(entries, results):
             if isinstance(result, Exception):
                 log.error("skipping %s: %r", entry["url"], result)
-        return [r for r in results if not isinstance(r, Exception)]
+        return parsed.feed, [r for r in results if not isinstance(r, Exception)]
 
 
 class Synthesis:
@@ -251,7 +247,7 @@ class Synthesis:
         return [drain(queue, producer) for queue, producer in zip(queues, producers)]
 
 
-def feed_xml(base, articles):
+def feed_xml(base, channel, articles):
     items = []
     for a in articles:
         path = audio_path(a["id"])
@@ -259,21 +255,23 @@ def feed_xml(base, articles):
         items.append(f"""
     <item>
       <title>{escape(a["title"])}</title>
-      <description>{escape(a["feed"])}: {escape(a["url"])}</description>
+      <description>{escape(a["url"])}</description>
       <link>{escape(a["url"])}</link>
       <guid isPermaLink="false">{a["id"]}</guid>
       <pubDate>{formatdate(a["published"], usegmt=True)}</pubDate>
       <enclosure url="{base}/{TOKEN}/audio/{a["id"]}.mp3" length="{size}" type="audio/mpeg"/>
       <itunes:duration>{size // BYTES_PER_SECOND}</itunes:duration>
     </item>""")
+    image = channel.get("image", {}).get("href")
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
   <channel>
-    <title>Articlecast</title>
-    <link>{base}</link>
-    <description>Articles from my feeds, read aloud.</description>
+    <title>{escape(channel["title"])}</title>
+    <link>{escape(channel.get("link", base))}</link>
+    <description>{escape(channel.get("subtitle", ""))}</description>
     <language>en-us</language>
-    <itunes:author>Articlecast</itunes:author>
+    <itunes:author>{escape(channel.get("author", channel["title"]))}</itunes:author>{f'''
+    <itunes:image href="{escape(image)}"/>''' if image else ""}
     <itunes:explicit>false</itunes:explicit>{"".join(items)}
   </channel>
 </rss>
@@ -288,8 +286,8 @@ def check_token(request):
 async def feed(request):
     check_token(request)
     state = request.app.state
-    articles = await state.library.recent(state.http)
-    return Response(feed_xml(f"https://{request.url.netloc}", articles), media_type="application/rss+xml")
+    channel, articles = await state.library.recent(state.http, request.query_params["url"])
+    return Response(feed_xml(f"https://{request.url.netloc}", channel, articles), media_type="application/rss+xml")
 
 
 async def substack_feed(request):
@@ -353,7 +351,7 @@ async def lifespan(app):
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 app = Starlette(lifespan=lifespan, routes=[
-    Route("/{token}/feed.xml", feed),
+    Route("/{token}/rss/feed.xml", feed),
     Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
     Route("/substack/{host}/feed.xml", substack_feed),
 ])
