@@ -1,0 +1,10 @@
+[project]
+name = "articlecast"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.14.3",
+    "feedparser>=6.0.14",
+    "google-genai>=2.25.0",
+    "trafilatura>=2.2.0",
+]
