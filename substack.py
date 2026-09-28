@@ -58,7 +58,7 @@ async def build_feed(http, host):
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
   <channel>
-    <title>{escape(channel["title"])} (read aloud)</title>
+    <title>{escape(channel["title"])}</title>
     <link>https://{host}</link>
     <description>{escape(channel.get("description", ""))}</description>
     <language>en-us</language>
