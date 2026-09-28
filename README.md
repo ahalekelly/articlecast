@@ -9,7 +9,7 @@ A private podcast feed of articles from RSS feeds, read aloud by Gemini 3.8 Flas
 - Later downloads get the finished MP3.
 - Only the `Pocket Casts` user agent can start synthesis. Pocket Casts' servers download every new episode as `WordPress.com - Audio`, and would otherwise synthesize everything.
 
-Pocket Casts starts playback after buffering about 512 KB, so the first listen of an article takes 10 to 20 seconds to start. It imports at most 10 new episodes per feed refresh.
+The first listen of an article starts about 3 seconds after you tap play. Pocket Casts imports at most 10 new episodes per feed refresh.
 
 ## Configuration
 
