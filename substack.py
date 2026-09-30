@@ -41,7 +41,7 @@ async def build_feed(http, host):
     async with http.get(f"https://{host}/api/v1/posts", params={"limit": POSTS_IN_FEED}) as response:
         response.raise_for_status()
         posts = await response.json()
-    episodes = [(post, item["audio_url"]) for post in posts for item in post["audio_items"] or []
+    episodes = [(post, item["audio_url"]) for post in posts for item in post.get("audio_items") or []
                 if item["type"] == "tts" and item["status"] == "completed" and item["audio_url"]]
     episode_sizes = await asyncio.gather(*(audio_size(http, url) for _, url in episodes))
     items = []
