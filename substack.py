@@ -5,6 +5,7 @@ directly, so nothing is synthesized or stored here.
 """
 
 import asyncio
+import json
 import time
 from calendar import timegm
 from datetime import datetime
@@ -15,13 +16,15 @@ import feedparser
 from starlette.exceptions import HTTPException
 
 POSTS_IN_FEED = 30
-FEED_REFRESH_SECONDS = 600
+FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
 
 # host -> (time built, feed XML)
 feeds = {}
 # S3 audio URL -> size in bytes; each URL holds one immutable file
 sizes = {}
+# Substack rate-limits requests from one IP across all publications, so they go one at a time.
+substack_turn = asyncio.Lock()
 
 
 async def audio_size(http, url):
@@ -32,15 +35,28 @@ async def audio_size(http, url):
     return sizes[url]
 
 
+async def substack_get(http, url):
+    """Returns the status and body of a GET, waiting out Substack's rate limit."""
+    async with substack_turn:
+        for _ in range(6):
+            async with http.get(url) as response:
+                if response.status != 429:
+                    return response.status, await response.read()
+                wait = int(response.headers.get("Retry-After", 10))
+            await asyncio.sleep(wait)
+    raise RuntimeError(f"{url} is still rate limited")
+
+
 async def build_feed(http, host):
-    async with http.get(f"https://{host}/feed") as response:
-        channel = feedparser.parse(await response.read()).feed if response.ok else {}
+    status, body = await substack_get(http, f"https://{host}/feed")
+    channel = feedparser.parse(body).feed if status == 200 else {}
     # The feed is public, so it only serves real Substack publications.
     if channel.get("generator") != "Substack":
         raise HTTPException(404, f"{host} is not a Substack publication")
-    async with http.get(f"https://{host}/api/v1/posts", params={"limit": POSTS_IN_FEED}) as response:
-        response.raise_for_status()
-        posts = await response.json()
+    status, body = await substack_get(http, f"https://{host}/api/v1/posts?limit={POSTS_IN_FEED}")
+    if status != 200:
+        raise RuntimeError(f"{host} posts API returned {status}")
+    posts = json.loads(body)
     episodes = [(post, item["audio_url"]) for post in posts for item in post.get("audio_items") or []
                 if item["type"] == "tts" and item["status"] == "completed" and item["audio_url"]]
     episode_sizes = await asyncio.gather(*(audio_size(http, url) for _, url in episodes))
