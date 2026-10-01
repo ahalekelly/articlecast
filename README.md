@@ -33,7 +33,7 @@ The same feeds without the token, such as `https://<host>/substack/<publication 
 | `TTS_MODEL` | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts`, `MAI-Voice-2.1`, or `MAI-Voice-2.1-Flash` |
 | `TTS_VOICE` | A voice of that model, listed in `tts.py`; changing the model or voice reads articles afresh |
 | `GEMINI_API_KEY` | Gemini API key, for Gemini models |
-| `AZURE_SPEECH_KEY` | Key of an East US Azure Speech resource, for MAI models |
+| `AZURE_SPEECH_KEY` | Key of a West US 2 Azure Speech resource, for MAI models |
 | `FEED_TOKEN` | Secret path segment in RSS feed, LessWrong feed, and audio URLs |
 | `STORE_DIR` | Directory for article text, audio, and each feed's article list |
 

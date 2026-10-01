@@ -27,6 +27,8 @@ MODELS = {
     "MAI-Voice-2.1-Flash": MAI_VOICES,
 }
 MAX_CHUNK_CHARS = 2000  # characters per request
+# Azure Speech region, near the Cloud Run region; MAI voices run only in some regions, and a key works only in its own.
+AZURE_REGION = "westus2"
 
 MODEL = os.environ["TTS_MODEL"]
 VOICE = os.environ["TTS_VOICE"]
@@ -37,7 +39,6 @@ if VOICE not in MODELS[MODEL]:
 # Names this model and voice's saved audio, so changing either reads articles afresh.
 READER = f"{MODEL}/{VOICE}"
 if MODEL.startswith("MAI-"):
-    # MAI voices run only in East US, so the key must come from an East US Speech resource.
     AZURE_SPEECH_KEY = os.environ["AZURE_SPEECH_KEY"]
 else:
     gemini = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -85,7 +86,7 @@ async def stream(http, text):
 async def provider_stream(http, text):
     if MODEL.startswith("MAI-"):
         ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="en-US-{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
-        async with http.post("https://eastus.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={
+        async with http.post(f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={
             "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY, "Content-Type": "application/ssml+xml",
             "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"},
             # A long request streams for minutes, so only a stalled connection times out.
