@@ -4,8 +4,11 @@ streaming call. Every provider returns 24 kHz 16-bit mono PCM.
 The model and voice match the read-aloud in Adrian's T3 Code fork (apps/mobile/src/lib/speechSettings.ts).
 """
 
+import logging
 import os
 import re
+import time
+from datetime import UTC, datetime
 
 import aiohttp
 from xml.sax.saxutils import escape
@@ -39,9 +42,15 @@ if VOICE not in MODELS[MODEL]:
 # Names this model and voice's saved audio, so changing either reads articles afresh.
 READER = f"{MODEL}/{VOICE}"
 if MODEL.startswith("MAI-"):
+    # MAI requests go to a free-tier (F0) resource first, and to a standard (S0) one when F0 refuses.
+    AZURE_SPEECH_FREE_KEY = os.environ["AZURE_SPEECH_FREE_KEY"]
     AZURE_SPEECH_KEY = os.environ["AZURE_SPEECH_KEY"]
 else:
     gemini = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+log = logging.getLogger("articlecast")
+# When F0's monthly quota runs out, requests skip it until this time, the start of the next month.
+free_quota_resets = 0.0
 
 SENTENCE_END = re.compile(r"(?:(?<=[.!?…])|(?<=[.!?…][\"'”’)\]]))\s+")
 
@@ -84,18 +93,28 @@ async def stream(http, text):
 
 
 async def provider_stream(http, text):
+    global free_quota_resets
     if MODEL.startswith("MAI-"):
         ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="en-US-{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
-        async with http.post(f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={
-            "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY, "Content-Type": "application/ssml+xml",
-            "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"},
-            # A long request streams for minutes, so only a stalled connection times out.
-            timeout=aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)) as response:
-            if response.status != 200:
-                raise RuntimeError(f"Azure speech failed ({response.status}): {await response.text()}")
-            async for pcm in response.content.iter_chunked(65536):
-                yield pcm
-        return
+        keys = [AZURE_SPEECH_KEY] if time.time() < free_quota_resets else [AZURE_SPEECH_FREE_KEY, AZURE_SPEECH_KEY]
+        for key in keys:
+            async with http.post(f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={
+                "Ocp-Apim-Subscription-Key": key, "Content-Type": "application/ssml+xml",
+                "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"},
+                # A long request streams for minutes, so only a stalled connection times out.
+                timeout=aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)) as response:
+                # F0 answers 429 while over its rate limit and 403 once its monthly quota is spent.
+                if key == AZURE_SPEECH_FREE_KEY and response.status in (403, 429):
+                    if response.status == 403:
+                        now = datetime.now(UTC)
+                        free_quota_resets = datetime(now.year + now.month // 12, now.month % 12 + 1, 1, tzinfo=UTC).timestamp()
+                    log.warning("Azure free tier refused (%d: %s); using the standard tier", response.status, await response.text())
+                    continue
+                if response.status != 200:
+                    raise RuntimeError(f"Azure speech failed ({response.status}): {await response.text()}")
+                async for pcm in response.content.iter_chunked(65536):
+                    yield pcm
+                return
     responses = await gemini.aio.models.generate_content_stream(model=MODEL, contents=text, config=types.GenerateContentConfig(
         response_modalities=["AUDIO"],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
