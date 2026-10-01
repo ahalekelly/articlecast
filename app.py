@@ -1,9 +1,9 @@
 """Podcast feeds of articles from RSS feeds, read aloud by Gemini on first download.
 
-Each feed lists every recent article with an estimated audio size. Nothing is synthesized
-until Pocket Casts on a phone downloads an episode. The first download streams audio as
-Gemini generates it, padded with silence to the size the feed promised. Later downloads
-get the finished file.
+Each feed lists every article seen in its RSS feed with an estimated audio size. Nothing
+is synthesized until Pocket Casts on a phone downloads an episode. The first download
+streams audio as Gemini generates it, padded with silence to the size the feed promised.
+Later downloads get the finished file.
 """
 
 import asyncio
@@ -40,7 +40,6 @@ VOICE = "Kore"
 # Only the phone app may trigger synthesis. Pocket Casts' servers also download episodes
 # (as "WordPress.com - Audio"), which would synthesize every article in the feed.
 SYNTHESIS_USER_AGENTS = {"Pocket Casts"}
-ARTICLES_IN_FEED = 30
 FEED_REFRESH_SECONDS = 600
 CHUNK_WORDS = 200  # words per Gemini request
 PARALLEL_REQUESTS = 3
@@ -86,7 +85,8 @@ async def encode_silent_frame():
 
 
 class Library:
-    """Recent articles from each requested RSS feed, with their extracted text."""
+    """Every article seen in each requested RSS feed. Each feed's article list is saved, so
+    articles stay after they drop out of the RSS file."""
 
     def __init__(self):
         self.feeds = {}  # feed URL -> (time refreshed, channel, articles)
@@ -102,19 +102,25 @@ class Library:
         async with http.get(feed_url) as response:
             response.raise_for_status()
             parsed = feedparser.parse(await response.read())
+        path = STORE / "feeds" / f"{hashlib.sha1(feed_url.encode()).hexdigest()[:16]}.json"
+        articles = json.loads(path.read_text()) if path.exists() else []
+        known = {a["url"] for a in articles}
         entries = []
         for entry in parsed.entries:
+            if entry.link in known:
+                continue
+            known.add(entry.link)
             published = entry.get("published_parsed") or entry.get("updated_parsed")
             entries.append({"url": entry.link, "title": entry.get("title", entry.link),
                             "published": timegm(published) if published else time.time()})
-        entries.sort(key=lambda e: e["published"], reverse=True)
         extract_slots = asyncio.Semaphore(8)
 
         async def load(entry):
+            """Returns the article's listing, extracting and saving its text if this is its first feed."""
             article_id = hashlib.sha1(entry["url"].encode()).hexdigest()[:16]
-            path = article_path(article_id)
-            if path.exists():
-                return json.loads(path.read_text())
+            listing = {**entry, "id": article_id}
+            if article_path(article_id).exists():
+                return {**listing, "size": json.loads(article_path(article_id).read_text())["size"]}
             async with extract_slots, http.get(entry["url"]) as response:
                 response.raise_for_status()
                 html = await response.text()
@@ -122,15 +128,19 @@ class Library:
             if not text:
                 raise ValueError(f"no article text found at {entry['url']}")
             speech = f"{entry['title']}.\n{text}"
-            article = {**entry, "id": article_id, "text": speech, "size": estimated_size(len(speech.split()))}
-            path.write_text(json.dumps(article))
-            return article
+            listing["size"] = estimated_size(len(speech.split()))
+            article_path(article_id).write_text(json.dumps({**listing, "text": speech}))
+            return listing
 
-        results = await asyncio.gather(*(load(e) for e in entries[:ARTICLES_IN_FEED]), return_exceptions=True)
+        results = await asyncio.gather(*(load(e) for e in entries), return_exceptions=True)
         for entry, result in zip(entries, results):
             if isinstance(result, Exception):
                 log.error("skipping %s: %r", entry["url"], result)
-        return parsed.feed, [r for r in results if not isinstance(r, Exception)]
+        added = [r for r in results if not isinstance(r, Exception)]
+        if added:
+            articles = sorted(articles + added, key=lambda a: a["published"], reverse=True)
+            path.write_text(json.dumps(articles))
+        return parsed.feed, articles
 
 
 class Synthesis:
@@ -291,7 +301,7 @@ async def feed(request):
 
 
 async def substack_feed(request):
-    xml = await substack.feed_xml(request.app.state.http, request.path_params["host"])
+    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["host"])
     return Response(xml, media_type="application/rss+xml")
 
 
@@ -341,6 +351,8 @@ async def audio(request):
 async def lifespan(app):
     (STORE / "articles").mkdir(parents=True, exist_ok=True)
     (STORE / "audio").mkdir(parents=True, exist_ok=True)
+    (STORE / "feeds").mkdir(parents=True, exist_ok=True)
+    (STORE / "substack").mkdir(parents=True, exist_ok=True)
     app.state.silent_frame = await encode_silent_frame()
     app.state.library = Library()
     app.state.syntheses = {}
