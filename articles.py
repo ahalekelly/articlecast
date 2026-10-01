@@ -1,5 +1,5 @@
-"""Articles for Gemini to read, saved under STORE_DIR: each one's text and estimated audio size,
-and its audio once synthesized."""
+"""Articles to read aloud, saved under STORE_DIR: each one's text and estimated audio size, and its
+audio from the server's model and voice, in finished chunks while it is read and whole once done."""
 
 import hashlib
 import json
@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 
 import lxml.html
+
+import tts
 
 STORE = Path(os.environ["STORE_DIR"])
 # Gemini Flash reads about 170 words per minute. The estimate runs long on purpose: a first
@@ -29,7 +31,12 @@ def article_path(article_id):
 
 
 def audio_path(article_id):
-    return STORE / "audio" / f"{article_id}.mp3"
+    return STORE / "audio" / tts.READER / f"{article_id}.mp3"
+
+
+def chunk_dir(article_id):
+    """Holds the PCM of each chunk read so far, so a restarted reading continues at the next chunk."""
+    return STORE / "chunks" / tts.READER / article_id
 
 
 def estimated_size(words):

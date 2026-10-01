@@ -1,11 +1,13 @@
 # Articlecast
 
-Podcast feeds of articles from RSS feeds, read aloud by Gemini 3.8 Flash TTS, and of Substack publications and LessWrong authors. Audio is generated only when you play or download an episode in Pocket Casts, so unplayed articles cost nothing.
+Podcast feeds of articles from RSS feeds, read aloud by Gemini 3.8 Flash TTS or Azure MAI voices, and of Substack publications and LessWrong authors. Audio is generated only when you play or download an episode in Pocket Casts, so unplayed articles cost nothing.
 
 ## How it works
 
 - `https://<host>/<token>/rss/feed.xml?url=<RSS feed URL>` is a podcast of every article seen in one RSS feed, with text extracted by trafilatura and an estimated audio size. Articles stay after they drop out of the RSS feed, but history starts with what the RSS feed held when first requested.
-- The first download from the Pocket Casts app starts synthesis. Audio streams to the phone as Gemini generates it, several paragraphs at a time, and is padded with silence to the estimated size.
+- The first download from the Pocket Casts app starts synthesis. Audio streams to the phone as it is read, in requests of whole sentences up to 2,000 characters, and is padded with silence to the estimated size. A failed request is retried after 1, 3, and 8 seconds.
+- Reading stays 10 minutes ahead of the furthest byte requested, so a player that streams and stops pulling pauses it while a download runs it at full speed.
+- Each finished request's audio is saved, so a reading that stalls or restarts continues at the next request, with the same bytes as before.
 - Later downloads get the finished MP3.
 - Only the `Pocket Casts` user agent can start synthesis. Pocket Casts' servers download every new episode as `WordPress.com - Audio`, and would otherwise synthesize everything.
 
@@ -25,7 +27,10 @@ The same feed without the token, `https://<host>/substack/<publication host>/fee
 
 | Variable | Meaning |
 |---|---|
-| `GEMINI_API_KEY` | Gemini API key |
+| `TTS_MODEL` | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts`, `MAI-Voice-2.1`, or `MAI-Voice-2.1-Flash` |
+| `TTS_VOICE` | A voice of that model, listed in `tts.py`; changing the model or voice reads articles afresh |
+| `GEMINI_API_KEY` | Gemini API key, for Gemini models |
+| `AZURE_SPEECH_KEY` | Key of an East US Azure Speech resource, for MAI models |
 | `FEED_TOKEN` | Secret path segment in RSS feed, LessWrong feed, and audio URLs |
 | `STORE_DIR` | Directory for article text, audio, and each feed's article list |
 
@@ -40,8 +45,14 @@ gcloud run deploy articlecast --source . --region us-west1 --use-http2 \
   --max-instances 1 --cpu-throttling --timeout 3600 --allow-unauthenticated \
   --add-volume name=store,type=cloud-storage,bucket=$BUCKET \
   --add-volume-mount volume=store,mount-path=/store \
-  --set-env-vars STORE_DIR=/store \
+  --set-env-vars STORE_DIR=/store,TTS_MODEL=gemini-3.8-flash-tts,TTS_VOICE=Kore \
   --set-secrets GEMINI_API_KEY=gemini-api-key:latest,FEED_TOKEN=feed-token:latest
 ```
 
-One instance keeps every request for an episode on the same synthesis. Cloud Run bills only while requests run, which keeps feed polling in the free tier, but synthesis may stall or fail once the phone disconnects, and then the next download starts it over. End-to-end HTTP/2, served by Hypercorn, is required: over HTTP/1 Cloud Run buffers any response that declares its size, and Pocket Casts only plays responses that do.
+A bucket lifecycle rule deletes audio a week after it is written; a later play reads the article again:
+
+```bash
+gcloud storage buckets update gs://$BUCKET --lifecycle-file=lifecycle.json
+```
+
+One instance keeps every request for an episode on the same synthesis. Cloud Run bills only while requests run, which keeps feed polling in the free tier, but synthesis pauses once the phone disconnects and continues on the next download. End-to-end HTTP/2, served by Hypercorn, is required: over HTTP/1 Cloud Run buffers any response that declares its size, and Pocket Casts only plays responses that do.

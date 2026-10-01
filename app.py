@@ -1,9 +1,9 @@
-"""Podcast feeds of articles from RSS feeds, read aloud by Gemini on first download, and of
-Substack and LessWrong authors.
+"""Podcast feeds of articles from RSS feeds, read aloud on first download by the server's text-to-speech
+model (see tts.py), and of Substack and LessWrong authors.
 
 An RSS feed lists every article seen in its RSS feed with an estimated audio size. Nothing
 is synthesized until Pocket Casts on a phone downloads an episode. The first download
-streams audio as Gemini generates it, padded with silence to the size the feed promised.
+streams audio as it is read, padded with silence to the size the feed promised.
 Later downloads get the finished file.
 """
 
@@ -12,14 +12,13 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import time
 from calendar import timegm
 
 import aiohttp
 import feedparser
 import trafilatura
-from google import genai
-from google.genai import types
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.responses import FileResponse, Response, StreamingResponse
@@ -29,21 +28,19 @@ import articles
 import lesswrong
 import podcast
 import substack
+import tts
 from articles import BYTES_PER_SECOND, FRAME_BYTES, STORE, article_path, audio_path
 
 TOKEN = os.environ["FEED_TOKEN"]
-gemini = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-
-MODEL = "gemini-3.8-flash-tts"
-VOICE = "Kore"
 # Only the phone app may trigger synthesis. Pocket Casts' servers also download episodes
 # (as "WordPress.com - Audio"), which would synthesize every article in the feed.
 SYNTHESIS_USER_AGENTS = {"Pocket Casts"}
 FEED_REFRESH_SECONDS = 600
-CHUNK_WORDS = 200  # words per Gemini request
 PARALLEL_REQUESTS = 3
+RETRY_DELAYS = (1, 3, 8)  # seconds before each retry of a failed chunk
+LEAD_SECONDS = 600  # audio read ahead of the furthest byte requested
 CHUNK_GAP_SECONDS = 0.4
-PCM_BYTES_PER_SECOND = 48000  # Gemini returns 24 kHz 16-bit mono
+PCM_BYTES_PER_SECOND = 48000  # every model returns 24 kHz 16-bit mono
 
 log = logging.getLogger("articlecast")
 
@@ -117,19 +114,54 @@ class Library:
         return parsed.feed, listings
 
 
+class ChunkAudio:
+    """One chunk's PCM as it arrives; `taken` counts the bytes the encoder has read."""
+
+    def __init__(self):
+        self.pcm = bytearray()
+        self.taken = 0
+        self.done = False
+        self.error = None
+        self.changed = asyncio.Condition()
+
+    async def update(self, pcm=b"", done=False, error=None, restart=False):
+        async with self.changed:
+            if restart and not self.taken:
+                self.pcm.clear()  # an attempt the encoder hasn't started on is dropped; otherwise its audio repeats
+            self.pcm += pcm
+            self.done = self.done or done
+            self.error = self.error or error
+            self.changed.notify_all()
+
+    async def take(self):
+        """Returns the next PCM for the encoder, or None once the chunk is done."""
+        async with self.changed:
+            await self.changed.wait_for(lambda: len(self.pcm) > self.taken or self.done or self.error)
+            if self.error:
+                raise self.error
+            piece = bytes(self.pcm[self.taken :])
+            self.taken = len(self.pcm)
+            return piece or None
+
+
 class Synthesis:
-    """One article's audio as it is generated, readable by any number of requests at once.
+    """One article's audio as it is read, readable by any number of requests at once.
 
     Readers see exactly `size` bytes, the size the feed promised: generated audio followed
     by silent frames, or cut off if the article ran longer than estimated. `data` keeps the
-    full audio for the saved file.
+    full audio for the saved file. Each finished chunk's PCM is saved, so a reading that
+    restarts continues at the next chunk and encodes the same bytes as before. Reading stays
+    LEAD_SECONDS ahead of the furthest byte requested: a streaming player that stops pulling
+    pauses it, and a download keeps it at full speed.
     """
 
-    def __init__(self, article, silent_frame):
+    def __init__(self, article, silent_frame, http):
         self.article = article
         self.size = article["size"]
         self.silent_frame = silent_frame
+        self.http = http
         self.data = bytearray()
+        self.demand = 0  # furthest byte any reader has asked for
         self.finished = False
         self.failed = False
         self.changed = asyncio.Condition()
@@ -137,19 +169,26 @@ class Synthesis:
 
     async def read(self, start, stop):
         position = start
-        while position < stop:
-            async with self.changed:
-                await self.changed.wait_for(lambda: len(self.data) > position or self.finished or self.failed)
-            if self.failed:
-                raise RuntimeError(f"synthesis failed for {self.article['id']}")
-            end = min(stop, position + 65536)
-            if position < len(self.data):
-                piece = bytes(self.data[position : min(end, len(self.data))])
-            else:
-                offset = (position - len(self.data)) % FRAME_BYTES
-                piece = (self.silent_frame * ((end - position) // FRAME_BYTES + 2))[offset : offset + end - position]
-            yield piece
-            position += len(piece)
+        started = time.time()
+        try:
+            while position < stop:
+                async with self.changed:
+                    self.demand = max(self.demand, position)
+                    self.changed.notify_all()
+                    await self.changed.wait_for(lambda: len(self.data) > position or self.finished or self.failed)
+                if self.failed:
+                    raise RuntimeError(f"synthesis failed for {self.article['id']}")
+                end = min(stop, position + 65536)
+                if position < len(self.data):
+                    piece = bytes(self.data[position : min(end, len(self.data))])
+                else:
+                    offset = (position - len(self.data)) % FRAME_BYTES
+                    piece = (self.silent_frame * ((end - position) // FRAME_BYTES + 2))[offset : offset + end - position]
+                yield piece
+                position += len(piece)
+        finally:
+            log.info("%s served bytes %d-%d (%.0f s of audio) in %.0f s", self.article["id"], start, position,
+                     (position - start) / BYTES_PER_SECOND, time.time() - started)
 
     async def append(self, piece):
         async with self.changed:
@@ -158,15 +197,55 @@ class Synthesis:
 
     async def run(self):
         started = time.time()
+        texts = tts.chunks(self.article["text"])
+        chunks = [ChunkAudio() for _ in texts]
+        folder = articles.chunk_dir(self.article["id"])
+        folder.mkdir(parents=True, exist_ok=True)
+        slots = asyncio.Semaphore(PARALLEL_REQUESTS)
+
+        async def produce(i):
+            try:
+                for attempt, delay in enumerate((0, *RETRY_DELAYS)):
+                    await asyncio.sleep(delay)
+                    try:
+                        async for pcm in tts.stream(self.http, texts[i]):
+                            await chunks[i].update(pcm)
+                        break
+                    except Exception as error:
+                        if attempt == len(RETRY_DELAYS):
+                            raise
+                        log.warning("%s chunk %d attempt %d failed, retrying: %r", self.article["id"], i, attempt + 1, error)
+                        await chunks[i].update(restart=True)
+                # Saves exactly what the encoder reads, so a restarted reading encodes the same bytes.
+                (folder / f"{i}.pcm").write_bytes(chunks[i].pcm)
+                await chunks[i].update(done=True)
+            except Exception as error:
+                await chunks[i].update(error=error)
+            finally:
+                slots.release()
+
+        async def schedule():
+            for i in range(len(texts)):
+                saved = folder / f"{i}.pcm"
+                if saved.exists():
+                    await chunks[i].update(saved.read_bytes(), done=True)
+                    continue
+                await slots.acquire()
+                async with self.changed:
+                    await self.changed.wait_for(lambda: len(self.data) - self.demand < LEAD_SECONDS * BYTES_PER_SECOND)
+                producers.append(asyncio.create_task(produce(i)))
+
+        producers = []
+        scheduler = asyncio.create_task(schedule())
         try:
             encoder = await asyncio.create_subprocess_exec(
                 *ffmpeg_args("-f", "s16le", "-ar", "24000", "-ac", "1", "-i", "pipe:0"),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
             collect = asyncio.create_task(self.collect(encoder.stdout))
-            for i, pcm_pieces in enumerate(self.generate_chunks()):
+            for i, chunk in enumerate(chunks):
                 if i:
                     encoder.stdin.write(bytes(int(PCM_BYTES_PER_SECOND * CHUNK_GAP_SECONDS) // 2 * 2))
-                async for pcm in pcm_pieces:
+                while (pcm := await chunk.take()) is not None:
                     encoder.stdin.write(pcm)
                     await encoder.stdin.drain()
             encoder.stdin.close()
@@ -174,61 +253,26 @@ class Synthesis:
             if await encoder.wait():
                 raise RuntimeError("ffmpeg failed")
             audio_path(self.article["id"]).write_bytes(self.data)
+            shutil.rmtree(folder)
             if len(self.data) > self.size:
                 log.warning("%s ran %d bytes past its estimate; its first listen was cut off", self.article["id"], len(self.data) - self.size)
             async with self.changed:
                 self.finished = True
                 self.changed.notify_all()
-            log.info("synthesized %s: %.0f s of audio in %.0f s", self.article["id"], len(self.data) / BYTES_PER_SECOND, time.time() - started)
+            log.info("read %s with %s: %.0f s of audio in %.0f s", self.article["id"], tts.READER, len(self.data) / BYTES_PER_SECOND, time.time() - started)
         except Exception:
             log.exception("synthesis failed for %s", self.article["id"])
             async with self.changed:
                 self.failed = True
                 self.changed.notify_all()
             raise
+        finally:
+            for task in (scheduler, *producers):
+                task.cancel()
 
     async def collect(self, stdout):
         while piece := await stdout.read(FRAME_BYTES * 16):
             await self.append(piece)
-
-    def generate_chunks(self):
-        """Yields, in order, an async iterator of PCM for each chunk; chunks generate in parallel."""
-        chunks, current = [], []
-        for paragraph in self.article["text"].split("\n"):
-            current.append(paragraph)
-            if sum(len(p.split()) for p in current) >= CHUNK_WORDS:
-                chunks.append("\n".join(current))
-                current = []
-        if current:
-            chunks.append("\n".join(current))
-        slots = asyncio.Semaphore(PARALLEL_REQUESTS)
-        queues = [asyncio.Queue() for _ in chunks]
-
-        async def produce(text, queue):
-            try:
-                await stream_chunk(text, queue)
-            finally:
-                await queue.put(None)
-
-        async def stream_chunk(text, queue):
-            async with slots:
-                stream = await gemini.aio.models.generate_content_stream(model=MODEL, contents=text, config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                    speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)))))
-                async for response in stream:
-                    for part in response.candidates[0].content.parts or []:
-                        if part.inline_data:
-                            await queue.put(part.inline_data.data)
-
-        producers = [asyncio.create_task(produce(text, queue)) for text, queue in zip(chunks, queues)]
-
-        async def drain(queue, producer):
-            while (pcm := await queue.get()) is not None:
-                yield pcm
-            await producer  # re-raises a failed request
-
-        return [drain(queue, producer) for queue, producer in zip(queues, producers)]
 
 
 def feed_xml(base, channel, listings):
@@ -299,7 +343,7 @@ async def audio(request):
         if user_agent not in SYNTHESIS_USER_AGENTS:
             log.warning("refused synthesis of %s for %r", article_id, user_agent)
             raise HTTPException(403)
-        synthesis = syntheses[article_id] = Synthesis(article, request.app.state.silent_frame)
+        synthesis = syntheses[article_id] = Synthesis(article, request.app.state.silent_frame, request.app.state.http)
     size = article["size"]
     start, stop = byte_range(range_header, size)
     if not 0 <= start < stop:
@@ -316,7 +360,7 @@ async def audio(request):
 @contextlib.asynccontextmanager
 async def lifespan(app):
     (STORE / "articles").mkdir(parents=True, exist_ok=True)
-    (STORE / "audio").mkdir(parents=True, exist_ok=True)
+    (STORE / "audio" / tts.READER).mkdir(parents=True, exist_ok=True)
     (STORE / "feeds").mkdir(parents=True, exist_ok=True)
     (STORE / "substack").mkdir(parents=True, exist_ok=True)
     (STORE / "lesswrong").mkdir(parents=True, exist_ok=True)
