@@ -95,6 +95,9 @@ async def stream(http, text):
 async def provider_stream(http, text):
     global free_quota_resets
     if MODEL.startswith("MAI-"):
+        # MAI reads square brackets as delivery tags: an unknown one is dropped, starts a sentence with a 400, or
+        # stalls a long request. Curly braces also lose words. Parentheses read as written.
+        text = text.translate(str.maketrans("[]{}", "()()"))
         ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="en-US-{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
         keys = [AZURE_SPEECH_KEY] if time.time() < free_quota_resets else [AZURE_SPEECH_FREE_KEY, AZURE_SPEECH_KEY]
         for key in keys:
