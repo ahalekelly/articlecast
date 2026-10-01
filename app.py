@@ -252,8 +252,16 @@ async def feed(request):
 
 
 async def substack_feed(request):
-    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["host"])
+    """Without the token, the feed's Gemini episodes link to an audio URL that refuses to play."""
+    if "token" in request.path_params:
+        check_token(request)
+    audio_base = f"https://{request.url.netloc}/{TOKEN}/audio" if "token" in request.path_params else f"https://{request.url.netloc}/audio"
+    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["host"], audio_base)
     return Response(xml, media_type="application/rss+xml")
+
+
+async def tokenless_audio(request):
+    raise HTTPException(403, "Gemini episodes play only from the feed URL with the token")
 
 
 async def lesswrong_feed(request):
@@ -325,5 +333,7 @@ app = Starlette(lifespan=lifespan, routes=[
     Route("/{token}/rss/feed.xml", feed),
     Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
     Route("/substack/{host}/feed.xml", substack_feed),
+    Route("/{token}/substack/{host}/feed.xml", substack_feed),
+    Route("/audio/{id}.mp3", tokenless_audio, methods=["GET", "HEAD"]),
     Route("/{token}/lesswrong/{slug}/feed.xml", lesswrong_feed),
 ])

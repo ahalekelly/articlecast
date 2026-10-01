@@ -7,6 +7,8 @@ import math
 import os
 from pathlib import Path
 
+import lxml.html
+
 STORE = Path(os.environ["STORE_DIR"])
 # Gemini Flash reads about 170 words per minute. The estimate runs long on purpose: a first
 # listen that runs past the estimate is cut off, one that falls short ends in silence.
@@ -15,6 +17,7 @@ ESTIMATE_MARGIN = 1.25
 # 128 kbps CBR at 24 kHz mono: every MP3 frame is 72 * 128000 / 24000 = 384 bytes.
 BYTES_PER_SECOND = 16000
 FRAME_BYTES = 384
+BLOCKS = ("p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre")
 
 
 def article_id(url):
@@ -53,3 +56,12 @@ def enclosure(listing, audio_base):
     path = audio_path(listing["id"])
     size = path.stat().st_size if path.exists() else listing["size"]
     return {"url": f"{audio_base}/{listing['id']}.mp3", "size": size, "duration": size // BYTES_PER_SECOND}
+
+
+def speech_text(html):
+    """Paragraphs of an HTML fragment, one per line."""
+    root = lxml.html.fragment_fromstring(html, create_parent="div")
+    for br in root.iter("br"):
+        br.tail = " " + (br.tail or "")
+    blocks = [el for el in root.iter(*BLOCKS) if not any(True for _ in el.iterdescendants(*BLOCKS))]
+    return "\n".join(text for el in blocks if (text := " ".join(el.text_content().split())))

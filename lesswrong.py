@@ -12,7 +12,6 @@ import time
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-import lxml.html
 from starlette.exceptions import HTTPException
 
 import articles
@@ -23,7 +22,6 @@ NEWEST_ITEMS = 50  # posts and Quick Takes fetched per refresh
 NARRATED_SINCE = datetime(2023, 7, 1, tzinfo=UTC).timestamp()  # TYPE III narrates posts from this date
 # A new post waits this long for its TYPE III narration, out of the feed, before Gemini reads it instead.
 NARRATION_WAIT_SECONDS = 86400
-BLOCKS = ("p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre")
 
 log = logging.getLogger("articlecast")
 
@@ -42,15 +40,6 @@ async def graphql(http, query, **variables):
     if "errors" in body:
         raise RuntimeError(f"LessWrong GraphQL error: {body['errors']}")
     return body["data"]
-
-
-def speech_text(html):
-    """Paragraphs of an HTML fragment, one per line."""
-    root = lxml.html.fragment_fromstring(html, create_parent="div")
-    for br in root.iter("br"):
-        br.tail = " " + (br.tail or "")
-    blocks = [el for el in root.iter(*BLOCKS) if not any(True for _ in el.iterdescendants(*BLOCKS))]
-    return "\n".join(text for el in blocks if (text := " ".join(el.text_content().split())))
 
 
 async def narration(http, post_url):
@@ -91,7 +80,7 @@ async def refresh_episodes(http, path, slug):
     for item in items:
         if item["_id"] in episodes:
             continue
-        text = speech_text(item["contents"]["html"]) if item["contents"] else ""
+        text = articles.speech_text(item["contents"]["html"]) if item["contents"] else ""
         if not text:
             continue
         is_post = "title" in item
