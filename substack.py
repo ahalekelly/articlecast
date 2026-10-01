@@ -45,13 +45,14 @@ async def substack_get(http, url):
 
 
 def own_audio(post):
-    """The URL and duration (None for TTS, which is CBR) of a post's own audio: Substack's TTS, or its podcast episode."""
+    """The URL and duration of a post's own audio: Substack's TTS, whose duration follows from its size, or its
+    podcast episode, whose duration is 0 until Substack knows it."""
     tts = next((item["audio_url"] for item in post.get("audio_items") or []
                 if item["type"] == "tts" and item["status"] == "completed" and item["audio_url"]), None)
     if tts:
         return tts, None
     if post["podcast_url"]:
-        return post["podcast_url"], int(post["podcast_duration"])
+        return post["podcast_url"], int(post["podcast_duration"] or 0)
     return None, None
 
 
@@ -62,7 +63,7 @@ def awaits_audio(post):
 async def refresh_posts(http, path, host):
     """Adds archive posts newer than the saved ones to the file at `path`, and returns all posts, newest first."""
     saved = {p["id"]: p for p in json.loads(path.read_text())} if path.exists() else {}
-    posts = dict(saved)
+    posts = {id: dict(post) for id, post in saved.items()}
     offset = 0
     while True:
         status, body = await substack_get(http, f"https://{host}/api/v1/archive?sort=new&offset={offset}&limit=50")
@@ -85,17 +86,25 @@ async def refresh_posts(http, path, host):
 
     async def measure(post):
         async with head_slots, http.head(post["audio_url"], allow_redirects=True) as response:
-            if response.status != 200:
-                log.warning("leaving out %s: its audio returned %d", post["url"], response.status)
+            if response.status != 200 or "Content-Length" not in response.headers:
+                log.warning("leaving out %s: its audio returned %d without a size", post["url"], response.status)
                 post["audio_url"] = None
                 return
             post["size"] = int(response.headers["Content-Length"])
-            post["duration"] = post["duration"] or post["size"] // TTS_BYTES_PER_SECOND
+            if post["duration"] is None:
+                post["duration"] = post["size"] // TTS_BYTES_PER_SECOND
 
     await asyncio.gather(*(measure(p) for p in posts.values() if p["audio_url"] and p["size"] is None))
     for post in posts.values():
         if post["free"] and post["audio_url"] is None and post["article"] is None and not awaits_audio(post):
-            status, body = await substack_get(http, f"https://{host}/api/v1/posts/{post['slug']}")
+            try:
+                status, body = await substack_get(http, f"https://{host}/api/v1/posts/{post['slug']}")
+            except Exception as error:
+                log.error("will retry %s: %r", post["url"], error)
+                continue
+            if status not in (200, 404):
+                log.error("will retry %s: it returned %d", post["url"], status)
+                continue
             text = articles.speech_text(json.loads(body)["body_html"] or "<p></p>") if status == 200 else ""
             if not text:
                 log.warning("leaving out %s: no text to read (status %d)", post["url"], status)
