@@ -49,8 +49,16 @@ else:
     gemini = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 log = logging.getLogger("articlecast")
-# When F0's monthly quota runs out, requests skip it until this time, the start of the next month.
+# When F0's monthly quota runs out, requests skip it until this time.
 free_quota_resets = 0.0
+
+
+def next_second_of_month():
+    """F0's quota refills at the start of the resource's billing cycle, usually the 1st, at a time Azure doesn't
+    document. The next 2nd at 00:00 UTC is past the 1st in every time zone, so an early retry can't skip a month."""
+    now = datetime.now(UTC)
+    second = datetime(now.year, now.month, 2, tzinfo=UTC)
+    return (second if second > now else datetime(now.year + now.month // 12, now.month % 12 + 1, 2, tzinfo=UTC)).timestamp()
 
 SENTENCE_END = re.compile(r"(?:(?<=[.!?…])|(?<=[.!?…][\"'”’)\]]))\s+")
 
@@ -109,8 +117,7 @@ async def provider_stream(http, text):
                 # F0 answers 429 while over its rate limit and 403 once its monthly quota is spent.
                 if key == AZURE_SPEECH_FREE_KEY and response.status in (403, 429):
                     if response.status == 403:
-                        now = datetime.now(UTC)
-                        free_quota_resets = datetime(now.year + now.month // 12, now.month % 12 + 1, 1, tzinfo=UTC).timestamp()
+                        free_quota_resets = time.time() + int(response.headers["Retry-After"]) if "Retry-After" in response.headers else next_second_of_month()
                     log.warning("Azure free tier refused (%d: %s); using the standard tier", response.status, await response.text())
                     continue
                 if response.status != 200:
