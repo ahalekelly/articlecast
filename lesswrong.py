@@ -1,7 +1,8 @@
 """Podcast feed of a LessWrong author's posts and Quick Takes.
 
 Posts play the narrations TYPE III AUDIO makes for LessWrong. Quick Takes, and posts still without a
-narration a day after publishing, are saved as articles for Gemini to read. Each author's episodes are saved as
+narration an hour after publishing, are saved as articles for Gemini to read; a narration that
+finishes within a week replaces Gemini's reading. Each author's episodes are saved as
 JSON, so episodes stay after they drop out of the author's newest posts.
 """
 
@@ -21,7 +22,9 @@ FEED_REFRESH_SECONDS = 3600
 NEWEST_ITEMS = 50  # posts and Quick Takes fetched per refresh
 NARRATED_SINCE = datetime(2023, 7, 1, tzinfo=UTC).timestamp()  # TYPE III narrates posts from this date
 # A new post waits this long for its TYPE III narration, out of the feed, before Gemini reads it instead.
-NARRATION_WAIT_SECONDS = 86400
+NARRATION_WAIT_SECONDS = 3600
+# A post without a narration is looked up again this long, so a late one replaces Gemini's reading.
+NARRATION_LOOKUP_SECONDS = 7 * 86400
 
 log = logging.getLogger("articlecast")
 
@@ -57,9 +60,9 @@ async def narration(http, post_url):
         return {"url": found["mp3_url"], "size": int(response.headers["Content-Length"]), "duration": int(found["duration"])}
 
 
-def awaits_narration(episode):
+def lacks_narration(episode, within_seconds):
     return (episode["is_post"] and episode["audio"] is None and episode["published"] >= NARRATED_SINCE
-            and time.time() - episode["published"] < NARRATION_WAIT_SECONDS)
+            and time.time() - episode["published"] < within_seconds)
 
 
 async def refresh_episodes(http, path, slug):
@@ -92,7 +95,7 @@ async def refresh_episodes(http, path, slug):
                                            "is_post": is_post, "article": article, "audio": None}
         if is_post and published >= NARRATED_SINCE:
             unchecked.append(episode)
-    lookups = unchecked + [e for e in episodes.values() if awaits_narration(e) and e not in unchecked]
+    lookups = unchecked + [e for e in episodes.values() if lacks_narration(e, NARRATION_LOOKUP_SECONDS) and e not in unchecked]
     for episode, audio in zip(lookups, await asyncio.gather(*(narration(http, e["url"]) for e in lookups), return_exceptions=True)):
         if isinstance(audio, Exception):
             log.error("TYPE III lookup failed for %s: %r", episode["url"], audio)
@@ -112,7 +115,7 @@ async def feed_xml(http, store, slug, article_audio_base):
     user, episodes = await asyncio.shield(task)
     # Built on every request, so episodes Gemini has read show their final size.
     items = [{"title": e["title"], "description": e["url"], "link": e["url"], "guid": f"lesswrong-{e['id']}", "published": e["published"],
-              **(e["audio"] or articles.enclosure(e["article"], article_audio_base))} for e in episodes if not awaits_narration(e)]
+              **(e["audio"] or articles.enclosure(e["article"], article_audio_base))} for e in episodes if not lacks_narration(e, NARRATION_WAIT_SECONDS)]
     return podcast.feed_xml(title=f"{user['displayName']} on LessWrong", link=f"https://www.lesswrong.com/users/{slug}",
                             description=(user["biography"] or {}).get("plaintextDescription") or "",
                             author=user["displayName"], image=None, items=items)

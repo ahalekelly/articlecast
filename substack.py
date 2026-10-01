@@ -1,7 +1,7 @@
 """Podcast feed of a Substack publication, using the text-to-speech audio Substack generates for its app.
 
 Substack's undocumented archive API lists every post with its TTS MP3 on S3, or for podcast posts the
-episode's MP3. The feed links those files directly. Free posts still without audio a day after
+episode's MP3. The feed links those files directly. Free posts still without audio an hour after
 publishing are saved as articles for Gemini to read. Each publication's posts are saved as JSON, and
 a refresh fetches only archive pages newer than the saved posts.
 """
@@ -22,7 +22,7 @@ import podcast
 FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
 # A new free post waits this long for Substack's TTS, out of the feed, before Gemini reads it instead.
-TTS_WAIT_SECONDS = 86400
+TTS_WAIT_SECONDS = 3600
 
 log = logging.getLogger("articlecast")
 
@@ -56,6 +56,13 @@ def own_audio(post):
     return None, None
 
 
+def description(post):
+    """The post's byline, which matters for publications with several authors, then its subtitle."""
+    names = [byline["name"] for byline in post["publishedBylines"]]
+    byline = f"By {', '.join(names[:-1])} and {names[-1]}." if len(names) > 1 else f"By {names[0]}." if names else ""
+    return f"{byline} {post['subtitle'] or ''}".strip()
+
+
 def awaits_audio(post):
     return post["audio_url"] is None and time.time() - post["published"] < TTS_WAIT_SECONDS
 
@@ -75,7 +82,7 @@ async def refresh_posts(http, path, host):
             old = saved.get(post["id"])
             same_audio = old and old["audio_url"] == audio_url
             posts[post["id"]] = {
-                "id": post["id"], "slug": post["slug"], "title": post["title"], "subtitle": post["subtitle"] or "",
+                "id": post["id"], "slug": post["slug"], "title": post["title"], "description": description(post),
                 "url": post["canonical_url"], "published": timegm(datetime.fromisoformat(post["post_date"]).utctimetuple()),
                 "audio_url": audio_url, "size": old["size"] if same_audio else None, "duration": old["duration"] if same_audio else duration,
                 "free": post["audience"] == "everyone", "article": old["article"] if old else None}
@@ -135,7 +142,7 @@ async def feed_xml(http, store, host, article_audio_base):
     # if the client gives up.
     channel, posts = await asyncio.shield(task)
     # Built on every request, so episodes Gemini has read show their final size.
-    items = [{"title": post["title"], "description": post["subtitle"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
+    items = [{"title": post["title"], "description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
               **({"url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
                  else articles.enclosure(post["article"], article_audio_base))}
              for post in posts if post["audio_url"] or post["article"]]
