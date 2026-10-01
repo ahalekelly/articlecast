@@ -1,6 +1,7 @@
-"""Podcast feeds of articles from RSS feeds, read aloud by Gemini on first download.
+"""Podcast feeds of articles from RSS feeds, read aloud by Gemini on first download, and of
+Substack and LessWrong authors.
 
-Each feed lists every article seen in its RSS feed with an estimated audio size. Nothing
+An RSS feed lists every article seen in its RSS feed with an estimated audio size. Nothing
 is synthesized until Pocket Casts on a phone downloads an episode. The first download
 streams audio as Gemini generates it, padded with silence to the size the feed promised.
 Later downloads get the finished file.
@@ -8,16 +9,11 @@ Later downloads get the finished file.
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
-import math
 import os
 import time
 from calendar import timegm
-from email.utils import formatdate
-from pathlib import Path
-from xml.sax.saxutils import escape
 
 import aiohttp
 import feedparser
@@ -29,9 +25,12 @@ from starlette.exceptions import HTTPException
 from starlette.responses import FileResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+import articles
+import lesswrong
+import podcast
 import substack
+from articles import BYTES_PER_SECOND, FRAME_BYTES, STORE, article_path, audio_path
 
-STORE = Path(os.environ["STORE_DIR"])
 TOKEN = os.environ["FEED_TOKEN"]
 gemini = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
@@ -44,29 +43,9 @@ FEED_REFRESH_SECONDS = 600
 CHUNK_WORDS = 200  # words per Gemini request
 PARALLEL_REQUESTS = 3
 CHUNK_GAP_SECONDS = 0.4
-# Gemini Flash reads about 170 words per minute. The estimate runs long on purpose: a first
-# listen that runs past the estimate is cut off, one that falls short ends in silence.
-WORDS_PER_SECOND = 170 / 60
-ESTIMATE_MARGIN = 1.25
-# 128 kbps CBR at 24 kHz mono: every MP3 frame is 72 * 128000 / 24000 = 384 bytes.
-BYTES_PER_SECOND = 16000
-FRAME_BYTES = 384
 PCM_BYTES_PER_SECOND = 48000  # Gemini returns 24 kHz 16-bit mono
 
 log = logging.getLogger("articlecast")
-
-
-def article_path(article_id):
-    return STORE / "articles" / f"{article_id}.json"
-
-
-def audio_path(article_id):
-    return STORE / "audio" / f"{article_id}.mp3"
-
-
-def estimated_size(words):
-    seconds = words / WORDS_PER_SECOND * ESTIMATE_MARGIN + 5
-    return math.ceil(seconds * BYTES_PER_SECOND / FRAME_BYTES) * FRAME_BYTES
 
 
 def ffmpeg_args(*input_args):
@@ -102,9 +81,9 @@ class Library:
         async with http.get(feed_url) as response:
             response.raise_for_status()
             parsed = feedparser.parse(await response.read())
-        path = STORE / "feeds" / f"{hashlib.sha1(feed_url.encode()).hexdigest()[:16]}.json"
-        articles = json.loads(path.read_text()) if path.exists() else []
-        known = {a["url"] for a in articles}
+        path = STORE / "feeds" / f"{articles.article_id(feed_url)}.json"
+        listings = json.loads(path.read_text()) if path.exists() else []
+        known = {a["url"] for a in listings}
         entries = []
         for entry in parsed.entries:
             if entry.link in known:
@@ -117,20 +96,15 @@ class Library:
 
         async def load(entry):
             """Returns the article's listing, extracting and saving its text if this is its first feed."""
-            article_id = hashlib.sha1(entry["url"].encode()).hexdigest()[:16]
-            listing = {**entry, "id": article_id}
-            if article_path(article_id).exists():
-                return {**listing, "size": json.loads(article_path(article_id).read_text())["size"]}
+            if article_path(articles.article_id(entry["url"])).exists():
+                return articles.listing(articles.article_id(entry["url"]))
             async with extract_slots, http.get(entry["url"]) as response:
                 response.raise_for_status()
                 html = await response.text()
             text = await asyncio.to_thread(trafilatura.extract, html, favor_precision=True)
             if not text:
                 raise ValueError(f"no article text found at {entry['url']}")
-            speech = f"{entry['title']}.\n{text}"
-            listing["size"] = estimated_size(len(speech.split()))
-            article_path(article_id).write_text(json.dumps({**listing, "text": speech}))
-            return listing
+            return articles.save(entry["url"], entry["title"], entry["published"], f"{entry['title']}.\n{text}")
 
         results = await asyncio.gather(*(load(e) for e in entries), return_exceptions=True)
         for entry, result in zip(entries, results):
@@ -138,9 +112,9 @@ class Library:
                 log.error("skipping %s: %r", entry["url"], result)
         added = [r for r in results if not isinstance(r, Exception)]
         if added:
-            articles = sorted(articles + added, key=lambda a: a["published"], reverse=True)
-            path.write_text(json.dumps(articles))
-        return parsed.feed, articles
+            listings = sorted(listings + added, key=lambda a: a["published"], reverse=True)
+            path.write_text(json.dumps(listings))
+        return parsed.feed, listings
 
 
 class Synthesis:
@@ -257,35 +231,12 @@ class Synthesis:
         return [drain(queue, producer) for queue, producer in zip(queues, producers)]
 
 
-def feed_xml(base, channel, articles):
-    items = []
-    for a in articles:
-        path = audio_path(a["id"])
-        size = path.stat().st_size if path.exists() else a["size"]
-        items.append(f"""
-    <item>
-      <title>{escape(a["title"])}</title>
-      <description>{escape(a["url"])}</description>
-      <link>{escape(a["url"])}</link>
-      <guid isPermaLink="false">{a["id"]}</guid>
-      <pubDate>{formatdate(a["published"], usegmt=True)}</pubDate>
-      <enclosure url="{base}/{TOKEN}/audio/{a["id"]}.mp3" length="{size}" type="audio/mpeg"/>
-      <itunes:duration>{size // BYTES_PER_SECOND}</itunes:duration>
-    </item>""")
+def feed_xml(base, channel, listings):
+    items = [{"title": a["title"], "description": a["url"], "link": a["url"], "guid": a["id"], "published": a["published"],
+              **articles.enclosure(a, f"{base}/{TOKEN}/audio")} for a in listings]
     image = channel.get("image", {}).get("href")
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
-  <channel>
-    <title>{escape(channel["title"])}</title>
-    <link>{escape(channel.get("link", base))}</link>
-    <description>{escape(channel.get("subtitle", ""))}</description>
-    <language>en-us</language>
-    <itunes:author>{escape(channel.get("author", channel["title"]))}</itunes:author>{f'''
-    <itunes:image href="{escape(image)}"/>''' if image else ""}
-    <itunes:explicit>false</itunes:explicit>{"".join(items)}
-  </channel>
-</rss>
-"""
+    return podcast.feed_xml(title=channel["title"], link=channel.get("link", base), description=channel.get("subtitle", ""),
+                            author=channel.get("author", channel["title"]), image=image, items=items)
 
 
 def check_token(request):
@@ -296,12 +247,19 @@ def check_token(request):
 async def feed(request):
     check_token(request)
     state = request.app.state
-    channel, articles = await state.library.recent(state.http, request.query_params["url"])
-    return Response(feed_xml(f"https://{request.url.netloc}", channel, articles), media_type="application/rss+xml")
+    channel, listings = await state.library.recent(state.http, request.query_params["url"])
+    return Response(feed_xml(f"https://{request.url.netloc}", channel, listings), media_type="application/rss+xml")
 
 
 async def substack_feed(request):
     xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["host"])
+    return Response(xml, media_type="application/rss+xml")
+
+
+async def lesswrong_feed(request):
+    check_token(request)
+    xml = await lesswrong.feed_xml(request.app.state.http, STORE / "lesswrong", request.path_params["slug"],
+                                   f"https://{request.url.netloc}/{TOKEN}/audio")
     return Response(xml, media_type="application/rss+xml")
 
 
@@ -353,6 +311,7 @@ async def lifespan(app):
     (STORE / "audio").mkdir(parents=True, exist_ok=True)
     (STORE / "feeds").mkdir(parents=True, exist_ok=True)
     (STORE / "substack").mkdir(parents=True, exist_ok=True)
+    (STORE / "lesswrong").mkdir(parents=True, exist_ok=True)
     app.state.silent_frame = await encode_silent_frame()
     app.state.library = Library()
     app.state.syntheses = {}
@@ -366,4 +325,5 @@ app = Starlette(lifespan=lifespan, routes=[
     Route("/{token}/rss/feed.xml", feed),
     Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
     Route("/substack/{host}/feed.xml", substack_feed),
+    Route("/{token}/lesswrong/{slug}/feed.xml", lesswrong_feed),
 ])

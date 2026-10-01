@@ -11,11 +11,11 @@ import logging
 import time
 from calendar import timegm
 from datetime import datetime
-from email.utils import formatdate
-from xml.sax.saxutils import escape
 
 import feedparser
 from starlette.exceptions import HTTPException
+
+import podcast
 
 FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
@@ -83,30 +83,11 @@ async def build_feed(http, path, host):
     # The feed is public, so it only serves real Substack publications.
     if channel.get("generator") != "Substack":
         raise HTTPException(404, f"{host} is not a Substack publication")
-    items = [f"""
-    <item>
-      <title>{escape(post["title"])}</title>
-      <description>{escape(post["subtitle"])}</description>
-      <link>{escape(post["url"])}</link>
-      <guid isPermaLink="false">substack-{post["id"]}</guid>
-      <pubDate>{formatdate(post["published"], usegmt=True)}</pubDate>
-      <enclosure url="{escape(post["audio_url"])}" length="{post["size"]}" type="audio/mpeg"/>
-      <itunes:duration>{post["size"] // TTS_BYTES_PER_SECOND}</itunes:duration>
-    </item>""" for post in await refresh_posts(http, path, host) if post["audio_url"]]
-    image = channel.get("image", {}).get("href")
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
-  <channel>
-    <title>{escape(channel["title"])}</title>
-    <link>https://{host}</link>
-    <description>{escape(channel.get("description", ""))}</description>
-    <language>en-us</language>
-    <itunes:author>{escape(channel.get("author", channel["title"]))}</itunes:author>{f'''
-    <itunes:image href="{escape(image)}"/>''' if image else ""}
-    <itunes:explicit>false</itunes:explicit>{"".join(items)}
-  </channel>
-</rss>
-"""
+    items = [{"title": post["title"], "description": post["subtitle"], "link": post["url"], "guid": f"substack-{post['id']}",
+              "published": post["published"], "url": post["audio_url"], "size": post["size"], "duration": post["size"] // TTS_BYTES_PER_SECOND}
+             for post in await refresh_posts(http, path, host) if post["audio_url"]]
+    return podcast.feed_xml(title=channel["title"], link=f"https://{host}", description=channel.get("description", ""),
+                            author=channel.get("author", channel["title"]), image=channel.get("image", {}).get("href"), items=items)
 
 
 async def feed_xml(http, store, host):

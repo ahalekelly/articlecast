@@ -143,6 +143,7 @@ dependencies = [
     { name = "feedparser" },
     { name = "google-genai" },
     { name = "hypercorn" },
+    { name = "lxml" },
     { name = "starlette" },
     { name = "trafilatura" },
 ]
@@ -153,6 +154,7 @@ requires-dist = [
     { name = "feedparser", specifier = ">=6.0.14" },
     { name = "google-genai", specifier = ">=2.25.0" },
     { name = "hypercorn", specifier = ">=0.18.0" },
+    { name = "lxml", specifier = ">=6.1.3" },
     { name = "starlette", specifier = ">=1.7.0" },
     { name = "trafilatura", specifier = ">=2.2.0" },
 ]
