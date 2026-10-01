@@ -86,8 +86,15 @@ async def build_feed(http, path, host):
     items = [{"title": post["title"], "description": post["subtitle"], "link": post["url"], "guid": f"substack-{post['id']}",
               "published": post["published"], "url": post["audio_url"], "size": post["size"], "duration": post["size"] // TTS_BYTES_PER_SECOND}
              for post in await refresh_posts(http, path, host) if post["audio_url"]]
+    image = channel.get("image", {}).get("href")
+    if image:
+        if not image.startswith("https://substackcdn.com/image/fetch/"):
+            raise RuntimeError(f"{host} logo {image} is not on Substack's image CDN")
+        # Podcast apps draw transparency black, which hides logos drawn as cut-outs, so the CDN
+        # serves the full-size original flattened onto white.
+        image = f"https://substackcdn.com/image/fetch/f_png,b_rgb:ffffff/{image.rsplit('/', 1)[1]}"
     return podcast.feed_xml(title=channel["title"], link=f"https://{host}", description=channel.get("description", ""),
-                            author=channel.get("author", channel["title"]), image=channel.get("image", {}).get("href"), items=items)
+                            author=channel.get("author", channel["title"]), image=image, items=items)
 
 
 async def feed_xml(http, store, host):
