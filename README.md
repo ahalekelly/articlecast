@@ -17,7 +17,7 @@ The first listen of an article starts about 3 seconds after you tap play. Pocket
 
 ## LessWrong feeds
 
-`https://<host>/<token>/lesswrong/<user slug>/feed.xml` is a feed of one LessWrong author's posts and Quick Takes, for example `.../lesswrong/zvi/feed.xml`. Posts play the narrations TYPE III AUDIO makes for LessWrong, found through its `narration/find` API. Quick Takes, and posts without a finished narration, are read by Gemini like RSS articles. History starts with the author's newest 50 posts and Quick Takes when first requested.
+`https://<host>/<token>/lesswrong/<user slug>/feed.xml` is a feed of one LessWrong author's posts and Quick Takes, for example `.../lesswrong/zvi/feed.xml`. Posts play the narrations TYPE III AUDIO makes for LessWrong, found through its `narration/find` API. Quick Takes, and posts still without a narration a day after publishing, are read by Gemini like RSS articles. History starts with the author's newest 50 posts and Quick Takes when first requested.
 
 ## Configuration
 
