@@ -6,6 +6,8 @@ The model and voice match the read-aloud in Adrian's T3 Code fork (apps/mobile/s
 
 import os
 import re
+
+import aiohttp
 from xml.sax.saxutils import escape
 
 from google import genai
@@ -72,11 +74,22 @@ def chunks(text):
 
 async def stream(http, text):
     """Yields the PCM of `text` read aloud as it arrives."""
+    received = 0
+    async for pcm in provider_stream(http, text):
+        received += len(pcm)
+        yield pcm
+    if not received:
+        raise RuntimeError(f"{MODEL} returned no audio")
+
+
+async def provider_stream(http, text):
     if MODEL.startswith("MAI-"):
         ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="en-US-{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
         async with http.post("https://eastus.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={
             "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY, "Content-Type": "application/ssml+xml",
-            "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"}) as response:
+            "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"},
+            # A long request streams for minutes, so only a stalled connection times out.
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)) as response:
             if response.status != 200:
                 raise RuntimeError(f"Azure speech failed ({response.status}): {await response.text()}")
             async for pcm in response.content.iter_chunked(65536):

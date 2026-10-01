@@ -115,7 +115,7 @@ class Library:
 
 
 class ChunkAudio:
-    """One chunk's PCM as it arrives; `taken` counts the bytes the encoder has read."""
+    """One chunk's PCM as it arrives; `taken` counts the bytes the encoder has read, always whole samples."""
 
     def __init__(self):
         self.pcm = bytearray()
@@ -126,8 +126,9 @@ class ChunkAudio:
 
     async def update(self, pcm=b"", done=False, error=None, restart=False):
         async with self.changed:
-            if restart and not self.taken:
-                self.pcm.clear()  # an attempt the encoder hasn't started on is dropped; otherwise its audio repeats
+            if restart:
+                # A retry continues after what the encoder has read, which then repeats in the new attempt.
+                del self.pcm[self.taken :]
             self.pcm += pcm
             self.done = self.done or done
             self.error = self.error or error
@@ -136,11 +137,12 @@ class ChunkAudio:
     async def take(self):
         """Returns the next PCM for the encoder, or None once the chunk is done."""
         async with self.changed:
-            await self.changed.wait_for(lambda: len(self.pcm) > self.taken or self.done or self.error)
+            await self.changed.wait_for(lambda: len(self.pcm) - self.taken >= 2 or self.done or self.error)
             if self.error:
                 raise self.error
-            piece = bytes(self.pcm[self.taken :])
-            self.taken = len(self.pcm)
+            whole = len(self.pcm) & ~1
+            piece = bytes(self.pcm[self.taken : whole])
+            self.taken = whole
             return piece or None
 
 
@@ -150,9 +152,11 @@ class Synthesis:
     Readers see exactly `size` bytes, the size the feed promised: generated audio followed
     by silent frames, or cut off if the article ran longer than estimated. `data` keeps the
     full audio for the saved file. Each finished chunk's PCM is saved, so a reading that
-    restarts continues at the next chunk and encodes the same bytes as before. Reading stays
+    restarts continues at the next chunk and encodes the same bytes as before; the chunk in
+    progress is read again, so a resume inside it may skip or repeat words. Reading stays
     LEAD_SECONDS ahead of the furthest byte requested: a streaming player that stops pulling
-    pauses it, and a download keeps it at full speed.
+    pauses it, and a download keeps it at full speed. Past the estimated size, which no
+    player requests beyond, it runs to the end.
     """
 
     def __init__(self, article, silent_frame, http):
@@ -216,24 +220,30 @@ class Synthesis:
                             raise
                         log.warning("%s chunk %d attempt %d failed, retrying: %r", self.article["id"], i, attempt + 1, error)
                         await chunks[i].update(restart=True)
-                # Saves exactly what the encoder reads, so a restarted reading encodes the same bytes.
-                (folder / f"{i}.pcm").write_bytes(chunks[i].pcm)
                 await chunks[i].update(done=True)
+                # Saves exactly the whole samples the encoder reads, so a restarted reading encodes the same bytes.
+                (folder / f"{i}.pcm").write_bytes(chunks[i].pcm[: len(chunks[i].pcm) & ~1])
             except Exception as error:
                 await chunks[i].update(error=error)
             finally:
                 slots.release()
 
         async def schedule():
-            for i in range(len(texts)):
-                saved = folder / f"{i}.pcm"
-                if saved.exists():
-                    await chunks[i].update(saved.read_bytes(), done=True)
-                    continue
-                await slots.acquire()
-                async with self.changed:
-                    await self.changed.wait_for(lambda: len(self.data) - self.demand < LEAD_SECONDS * BYTES_PER_SECOND)
-                producers.append(asyncio.create_task(produce(i)))
+            try:
+                for i in range(len(texts)):
+                    saved = folder / f"{i}.pcm"
+                    if saved.exists():
+                        await chunks[i].update(saved.read_bytes(), done=True)
+                        continue
+                    await slots.acquire()
+                    async with self.changed:
+                        await self.changed.wait_for(lambda: len(self.data) - self.demand < LEAD_SECONDS * BYTES_PER_SECOND
+                                                    or len(self.data) >= self.size)
+                    producers.append(asyncio.create_task(produce(i)))
+            except Exception as error:
+                for chunk in chunks:
+                    if not chunk.done:
+                        await chunk.update(error=error)
 
         producers = []
         scheduler = asyncio.create_task(schedule())
