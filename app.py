@@ -1,5 +1,5 @@
 """Podcast feeds of articles from RSS feeds, read aloud on first download by the server's text-to-speech
-model (see tts.py), and of Substack and LessWrong authors.
+model (see tts.py), and of Substack publications and authors and LessWrong authors.
 
 An RSS feed lists every article seen in its RSS feed with an estimated audio size. Nothing
 is synthesized until Pocket Casts on a phone downloads an episode. The first download
@@ -310,7 +310,7 @@ async def substack_feed(request):
     if "token" in request.path_params:
         check_token(request)
     audio_base = f"https://{request.url.netloc}/{TOKEN}/audio" if "token" in request.path_params else f"https://{request.url.netloc}/audio"
-    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["host"], audio_base)
+    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], audio_base)
     return Response(xml, media_type="application/rss+xml")
 
 
@@ -386,8 +386,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message
 app = Starlette(lifespan=lifespan, routes=[
     Route("/{token}/rss/feed.xml", feed),
     Route("/{token}/audio/{id}.mp3", audio, methods=["GET", "HEAD"]),
-    Route("/substack/{host}/feed.xml", substack_feed),
-    Route("/{token}/substack/{host}/feed.xml", substack_feed),
+    Route("/substack/{source}/feed.xml", substack_feed),
+    Route("/{token}/substack/{source}/feed.xml", substack_feed),
     Route("/audio/{id}.mp3", tokenless_audio, methods=["GET", "HEAD"]),
     Route("/{token}/lesswrong/{slug}/feed.xml", lesswrong_feed),
 ])
