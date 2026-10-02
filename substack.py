@@ -5,7 +5,8 @@ author wrote in any publication, each with its TTS MP3 on S3, or for podcast pos
 feed links those files directly. Requests are signed in as the owner's Substack account, so posts of
 publications they pay for come with their audio and text. Readable posts still without audio an hour after
 publishing are saved as articles to read aloud, sized from their word count; their text is fetched on first
-play, which keeps a first refresh to the archive pages. Each feed's posts are saved as JSON, and a refresh
+play, which keeps a first refresh to the archive pages. Paid posts the owner can't read often open with free
+text before the paywall; for the newest few, that opening is fetched during refresh and read as a preview. Each feed's posts are saved as JSON, and a refresh
 fetches only pages newer than the saved posts.
 """
 
@@ -30,6 +31,9 @@ FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
 # A new free post waits this long for Substack's TTS, out of the feed, before Gemini reads it instead.
 TTS_WAIT_SECONDS = 3600
+# The free openings of each feed's newest paid posts the owner can't read are read aloud when this long.
+PREVIEWS = 10
+PREVIEW_MIN_WORDS = 300
 
 # The `substack.sid` cookie of the owner's signed-in Substack session, URL-decoded.
 SUBSTACK_SID = os.environ["SUBSTACK_SID"]
@@ -102,6 +106,11 @@ def description(post):
     return f"{byline} {post['subtitle'] or ''}".strip()
 
 
+def readable(post, paid):
+    """Whether the owner can read a post: it is free, or its publication is one of the `paid` ids."""
+    return post["free"] or post["publication_id"] in paid
+
+
 def awaits_audio(post):
     return post["audio_url"] is None and time.time() - post["published"] < TTS_WAIT_SECONDS
 
@@ -136,8 +145,7 @@ async def author_pages(http, user_id):
 
 
 async def refresh_posts(http, path, pages):
-    """Adds posts from `pages` newer than the saved ones to the file at `path`, and returns all posts, newest first.
-    A post is readable if it is free or its publication is paid for, until its text turns out to be empty."""
+    """Adds posts from `pages` newer than the saved ones to the file at `path`, and returns all posts, newest first."""
     paid = await paid_publications(http)
     saved = {p["id"]: p for p in json.loads(path.read_text())} if path.exists() else {}
     posts = {id: dict(post) for id, post in saved.items()}
@@ -151,8 +159,7 @@ async def refresh_posts(http, path, pages):
                 "url": post["canonical_url"], "published": timegm(datetime.fromisoformat(post["post_date"]).utctimetuple()),
                 "audio_url": audio_url, "size": old["size"] if same_audio else None, "duration": old["duration"] if same_audio else duration,
                 "free": post["audience"] == "everyone", "article": old["article"] if old else None,
-                "words": post["wordcount"],
-                "readable": old["readable"] if old else post["audience"] == "everyone" or post["publication_id"] in paid}
+                "publication_id": post["publication_id"], "words": post["wordcount"], "opening_words": old["opening_words"] if old else None}
         if any(post["id"] in saved for post in page):
             break
     head_slots = asyncio.Semaphore(16)
@@ -173,9 +180,23 @@ async def refresh_posts(http, path, pages):
 
     await asyncio.gather(*(measure(p) for p in posts.values() if p["audio_url"] and p["size"] is None))
     for post in posts.values():
-        if post["readable"] and post["words"] and post["audio_url"] is None and post["article"] is None and not awaits_audio(post):
+        # A preview gives way to the whole post once its publication is paid for.
+        if readable(post, paid) and post["words"] and post["audio_url"] is None and (post["article"] is None or post["opening_words"] is not None) and not awaits_audio(post):
+            post["opening_words"] = None
             post["article"] = articles.save(post["url"], post["title"], post["published"], post["words"] + len(post["title"].split()),
                                             {"substack_post": f"https://{urlsplit(post['url']).netloc}/api/v1/posts/{post['slug']}"})
+    unreadable = sorted((p for p in posts.values() if not readable(p, paid) and p["audio_url"] is None), key=lambda p: p["published"], reverse=True)
+    for post in unreadable[:PREVIEWS]:
+        if post["opening_words"] is None:
+            status, body = await substack_get(http, f"https://{urlsplit(post['url']).netloc}/api/v1/posts/{post['slug']}")
+            if status != 200:
+                log.error("will retry the opening of %s: it returned %d", post["url"], status)
+                continue
+            text = articles.speech_text(json.loads(body)["body_html"] or "<p></p>")
+            post["opening_words"] = len(text.split())
+            if post["opening_words"] >= PREVIEW_MIN_WORDS:
+                speech = f"{post['title']}.\n{text}\nThe rest of this post is for paid subscribers."
+                post["article"] = articles.save(post["url"], post["title"], post["published"], len(speech.split()), {"text": speech})
     if posts != saved:
         path.write_text(json.dumps(list(posts.values())))
     return sorted(posts.values(), key=lambda p: p["published"], reverse=True)
@@ -236,9 +257,10 @@ async def feed_xml(http, store, source, article_audio_base, private):
     # A first refresh pages through the whole archive; shielding it keeps that work for the next request
     # if the client gives up.
     channel, posts = await asyncio.shield(task)
+    paid = await paid_publications(http)
     # Built on every request, so episodes Gemini has read show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
               **({"title": post["title"], "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
-                 else articles.read_aloud_episode(post["title"], post["article"], article_audio_base, private))}
+                 else articles.read_aloud_episode(post["title"] if readable(post, paid) else f"Preview: {post['title']}", post["article"], article_audio_base, private))}
              for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["free"])]
     return podcast.feed_xml(**channel, items=items)
