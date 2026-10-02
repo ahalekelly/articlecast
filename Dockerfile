@@ -3,5 +3,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
-COPY *.py ./
+COPY *.py no-audio.mp3 ./
 CMD ["sh", "-c", "exec uv run --no-sync hypercorn app:app --bind 0.0.0.0:$PORT"]

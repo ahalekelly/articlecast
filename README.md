@@ -20,7 +20,7 @@ The first listen of an article starts about 3 seconds after you tap play. Pocket
 
 Episodes link directly to the text-to-speech MP3s Substack makes for its app, or to the episode MP3 of podcast posts, found through Substack's undocumented archive and profile APIs. Requests are signed in to the owner's Substack account, so paid posts of publications they pay for are included with their audio. Free and paid-for posts still without audio an hour after publishing are read by Gemini like RSS articles. Each episode's description starts with the post's byline. The first request for a large publication takes a few minutes.
 
-The same feeds without the token, such as `https://<host>/substack/<publication host>/feed.xml`, are public: they leave out paid posts, and their Gemini episodes refuse to play.
+The same feeds without the token, such as `https://<host>/substack/<publication host>/feed.xml`, are public: they leave out paid posts, and posts without Substack audio play a short notice to read the post on Substack instead.
 
 `sync_substack.py` keeps Pocket Casts subscribed to a feed for each publication the owner subscribes to on Substack and each author they follow, skipping feeds without episodes and authors of subscribed publications. It unsubscribes podcasts it added once they leave the Substack lists. Run it daily, for example from a systemd timer:
 

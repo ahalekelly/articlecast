@@ -306,8 +306,7 @@ async def feed(request):
 
 
 async def substack_feed(request):
-    """Without the token, the feed leaves out paid posts, and its Gemini episodes link to an audio URL that
-    refuses to play."""
+    """Without the token, the feed leaves out paid posts, and its Gemini episodes play a notice instead."""
     if "token" in request.path_params:
         check_token(request)
     audio_base = f"https://{request.url.netloc}/{TOKEN}/audio" if "token" in request.path_params else f"https://{request.url.netloc}/audio"
@@ -317,7 +316,8 @@ async def substack_feed(request):
 
 
 async def tokenless_audio(request):
-    raise HTTPException(403, "Gemini episodes play only from the feed URL with the token")
+    """Public feeds don't read posts aloud; their episodes play a short recording that says so."""
+    return FileResponse("no-audio.mp3", media_type="audio/mpeg")
 
 
 async def lesswrong_feed(request):
