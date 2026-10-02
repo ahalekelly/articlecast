@@ -11,7 +11,7 @@ Podcast feeds of articles from RSS feeds, read aloud by Gemini 3.8 Flash TTS or 
 - Later downloads get the finished MP3.
 - Only the `Pocket Casts` user agent can start synthesis. Pocket Casts' servers download every new episode as `WordPress.com - Audio`, and would otherwise synthesize everything.
 
-Every episode's notes end with a link to the original post. The first listen of an article starts about 3 seconds after you tap play. Pocket Casts imports at most 10 new episodes per feed refresh.
+Every episode's notes end with a link to the original post. The first listen of an article starts about 3 seconds after you tap play. Turn on Trim Silence in Pocket Casts to skip the silence after the article ends. Pocket Casts imports at most 10 new episodes per feed refresh.
 
 ## Substack feeds
 
