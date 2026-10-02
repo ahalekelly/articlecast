@@ -18,6 +18,8 @@ WORDS_PER_SECOND = 170 / 60
 ESTIMATE_MARGIN = 1.25
 # 128 kbps CBR at 24 kHz mono: every MP3 frame is 72 * 128000 / 24000 = 384 bytes.
 BYTES_PER_SECOND = 16000
+# Public feeds play this recording instead of reading an article aloud.
+NO_AUDIO_SIZE = Path("no-audio.mp3").stat().st_size
 FRAME_BYTES = 384
 BLOCKS = ("p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre")
 
@@ -63,6 +65,14 @@ def enclosure(listing, audio_base):
     path = audio_path(listing["id"])
     size = path.stat().st_size if path.exists() else listing["size"]
     return {"url": f"{audio_base}/{listing['id']}.mp3", "size": size, "duration": size // BYTES_PER_SECOND}
+
+
+def read_aloud_episode(title, listing, audio_base, private):
+    """The title and enclosure of an article read aloud, or in a public feed, of the notice played instead."""
+    if private:
+        return {"title": title, **enclosure(listing, audio_base)}
+    return {"title": f"No audio: {title}", "url": f"{audio_base}/{listing['id']}.mp3",
+            "size": NO_AUDIO_SIZE, "duration": NO_AUDIO_SIZE // BYTES_PER_SECOND}
 
 
 def speech_text(html):

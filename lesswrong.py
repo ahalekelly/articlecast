@@ -106,7 +106,9 @@ async def refresh_episodes(http, path, slug):
     return user, sorted(episodes.values(), key=lambda e: e["published"], reverse=True)
 
 
-async def feed_xml(http, store, slug, article_audio_base):
+async def feed_xml(http, store, slug, article_audio_base, private):
+    """The feed of a LessWrong author. Unless `private`, episodes without a narration play a notice instead of
+    being read aloud."""
     started, task = refreshes.get(slug, (0, None))
     if time.time() - started > FEED_REFRESH_SECONDS:
         task = asyncio.create_task(refresh_episodes(http, store / f"{slug}.json", slug))
@@ -114,8 +116,9 @@ async def feed_xml(http, store, slug, article_audio_base):
         refreshes[slug] = (time.time(), task)
     user, episodes = await asyncio.shield(task)
     # Built on every request, so episodes Gemini has read show their final size.
-    items = [{"title": e["title"], "description": e["url"], "link": e["url"], "guid": f"lesswrong-{e['id']}", "published": e["published"],
-              **(e["audio"] or articles.enclosure(e["article"], article_audio_base))} for e in episodes if not lacks_narration(e, NARRATION_WAIT_SECONDS)]
+    items = [{"description": e["url"], "link": e["url"], "guid": f"lesswrong-{e['id']}", "published": e["published"],
+              **({"title": e["title"], **e["audio"]} if e["audio"] else articles.read_aloud_episode(e["title"], e["article"], article_audio_base, private))}
+             for e in episodes if not lacks_narration(e, NARRATION_WAIT_SECONDS)]
     return podcast.feed_xml(title=f"{user['displayName']} on LessWrong", link=f"https://www.lesswrong.com/users/{slug}",
                             description=(user["biography"] or {}).get("plaintextDescription") or "",
                             author=user["displayName"], image=None, items=items)

@@ -305,12 +305,17 @@ async def feed(request):
     return Response(feed_xml(f"https://{request.url.netloc}", channel, listings), media_type="application/rss+xml")
 
 
+def read_aloud_audio(request):
+    """The audio URL base of a Substack or LessWrong feed's read-aloud episodes, and whether the feed is private,
+    that is, requested with the token."""
+    if "token" not in request.path_params:
+        return f"https://{request.url.netloc}/audio", False
+    check_token(request)
+    return f"https://{request.url.netloc}/{TOKEN}/audio", True
+
+
 async def substack_feed(request):
-    if "token" in request.path_params:
-        check_token(request)
-    audio_base = f"https://{request.url.netloc}/{TOKEN}/audio" if "token" in request.path_params else f"https://{request.url.netloc}/audio"
-    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], audio_base,
-                                   private="token" in request.path_params)
+    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], *read_aloud_audio(request))
     return Response(xml, media_type="application/rss+xml")
 
 
@@ -320,9 +325,7 @@ async def tokenless_audio(request):
 
 
 async def lesswrong_feed(request):
-    check_token(request)
-    xml = await lesswrong.feed_xml(request.app.state.http, STORE / "lesswrong", request.path_params["slug"],
-                                   f"https://{request.url.netloc}/{TOKEN}/audio")
+    xml = await lesswrong.feed_xml(request.app.state.http, STORE / "lesswrong", request.path_params["slug"], *read_aloud_audio(request))
     return Response(xml, media_type="application/rss+xml")
 
 
@@ -390,5 +393,6 @@ app = Starlette(lifespan=lifespan, routes=[
     Route("/substack/{source}/feed.xml", substack_feed),
     Route("/{token}/substack/{source}/feed.xml", substack_feed),
     Route("/audio/{id}.mp3", tokenless_audio, methods=["GET", "HEAD"]),
+    Route("/lesswrong/{slug}/feed.xml", lesswrong_feed),
     Route("/{token}/lesswrong/{slug}/feed.xml", lesswrong_feed),
 ])

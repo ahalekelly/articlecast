@@ -20,7 +20,7 @@ The first listen of an article starts about 3 seconds after you tap play. Pocket
 
 Episodes link directly to the text-to-speech MP3s Substack makes for its app, or to the episode MP3 of podcast posts, found through Substack's undocumented archive and profile APIs. Requests are signed in to the owner's Substack account, so paid posts of publications they pay for are included with their audio. Free and paid-for posts still without audio an hour after publishing are read by Gemini like RSS articles. Each episode's description starts with the post's byline. The first request for a large publication takes a few minutes.
 
-The same feeds without the token, such as `https://<host>/substack/<publication host>/feed.xml`, are public: they leave out paid posts, and posts without Substack audio are titled "No audio: …" and play a short notice to read the post on Substack instead.
+The same feeds without the token, such as `https://<host>/substack/<publication host>/feed.xml`, are public: they leave out paid posts, and posts without Substack audio are titled "No audio: …" and play a short notice that the private feed reads them aloud.
 
 `sync_substack.py` keeps Pocket Casts subscribed to a feed for each publication the owner subscribes to on Substack and each author they follow, skipping feeds without episodes and authors of subscribed publications. It unsubscribes podcasts it added once they leave the Substack lists. Run it daily, for example from a systemd timer:
 
@@ -31,7 +31,7 @@ ARTICLECAST_URL=https://<host> FEED_TOKEN=... SUBSTACK_SID=... POCKETCASTS_EMAIL
 
 ## LessWrong feeds
 
-`https://<host>/<token>/lesswrong/<user slug>/feed.xml` is a feed of one LessWrong author's posts and Quick Takes, for example `.../lesswrong/zvi/feed.xml`. Posts play the narrations TYPE III AUDIO makes for LessWrong, found through its `narration/find` API. Quick Takes, and posts still without a narration an hour after publishing, are read by Gemini like RSS articles; a narration that finishes within a week replaces Gemini's reading. History starts with the author's newest 50 posts and Quick Takes when first requested.
+`https://<host>/<token>/lesswrong/<user slug>/feed.xml` is a feed of one LessWrong author's posts and Quick Takes, for example `.../lesswrong/zvi/feed.xml`. Posts play the narrations TYPE III AUDIO makes for LessWrong, found through its `narration/find` API. Quick Takes, and posts still without a narration an hour after publishing, are read by Gemini like RSS articles; a narration that finishes within a week replaces Gemini's reading. History starts with the author's newest 50 posts and Quick Takes when first requested. The same feed without the token, `https://<host>/lesswrong/<user slug>/feed.xml`, is public: episodes without a narration are titled "No audio: …" and play a short notice instead.
 
 ## Configuration
 

@@ -15,7 +15,6 @@ import os
 import time
 from calendar import timegm
 from datetime import datetime
-from pathlib import Path
 from http.cookies import SimpleCookie
 from urllib.parse import quote, urlsplit
 
@@ -30,8 +29,6 @@ FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
 # A new free post waits this long for Substack's TTS, out of the feed, before Gemini reads it instead.
 TTS_WAIT_SECONDS = 3600
-# Public feeds play this instead of reading a post aloud.
-NO_AUDIO_SIZE = Path("no-audio.mp3").stat().st_size
 
 # The `substack.sid` cookie of the owner's signed-in Substack session, URL-decoded.
 SUBSTACK_SID = os.environ["SUBSTACK_SID"]
@@ -233,14 +230,9 @@ async def feed_xml(http, store, source, article_audio_base, private):
     # A first refresh pages through the whole archive; shielding it keeps that work for the next request
     # if the client gives up.
     channel, posts = await asyncio.shield(task)
-    def episode(post):
-        if post["audio_url"]:
-            return {"title": post["title"], "url": post["audio_url"], "size": post["size"], "duration": post["duration"]}
-        if private:  # built on every request, so episodes Gemini has read show their final size
-            return {"title": post["title"], **articles.enclosure(post["article"], article_audio_base)}
-        return {"title": f"No audio: {post['title']}", "url": f"{article_audio_base}/{post['article']['id']}.mp3",
-                "size": NO_AUDIO_SIZE, "duration": NO_AUDIO_SIZE // articles.BYTES_PER_SECOND}
-
-    items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"], **episode(post)}
+    # Built on every request, so episodes Gemini has read show their final size.
+    items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
+              **({"title": post["title"], "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
+                 else articles.read_aloud_episode(post["title"], post["article"], article_audio_base, private))}
              for post in posts if (post["audio_url"] or post["article"]) and (private or post["free"])]
     return podcast.feed_xml(**channel, items=items)
