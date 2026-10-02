@@ -90,7 +90,8 @@ async def refresh_episodes(http, path, slug):
         words = text.split()
         title = item["title"] if is_post else "Quick Take: " + " ".join(words[:10]) + ("…" if len(words) > 10 else "")
         published = datetime.fromisoformat(item["postedAt"]).timestamp()
-        article = articles.save(item["pageUrl"], title, published, f"{title}.\n{text}" if is_post else text)
+        speech = f"{title}.\n{text}" if is_post else text
+        article = articles.save(item["pageUrl"], title, published, len(speech.split()), {"text": speech})
         episode = episodes[item["_id"]] = {"id": item["_id"], "title": title, "url": item["pageUrl"], "published": published,
                                            "is_post": is_post, "article": article, "audio": None}
         if is_post and published >= NARRATED_SINCE:

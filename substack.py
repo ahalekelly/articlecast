@@ -4,7 +4,8 @@ Substack's undocumented archive API lists every post of a publication, and its p
 author wrote in any publication, each with its TTS MP3 on S3, or for podcast posts the episode's MP3. The
 feed links those files directly. Requests are signed in as the owner's Substack account, so posts of
 publications they pay for come with their audio and text. Readable posts still without audio an hour after
-publishing are saved as articles for Gemini to read. Each feed's posts are saved as JSON, and a refresh
+publishing are saved as articles to read aloud, sized from their word count; their text is fetched on first
+play, which keeps a first refresh to the archive pages. Each feed's posts are saved as JSON, and a refresh
 fetches only pages newer than the saved posts.
 """
 
@@ -150,6 +151,7 @@ async def refresh_posts(http, path, pages):
                 "url": post["canonical_url"], "published": timegm(datetime.fromisoformat(post["post_date"]).utctimetuple()),
                 "audio_url": audio_url, "size": old["size"] if same_audio else None, "duration": old["duration"] if same_audio else duration,
                 "free": post["audience"] == "everyone", "article": old["article"] if old else None,
+                "words": post["wordcount"],
                 "readable": old["readable"] if old else post["audience"] == "everyone" or post["publication_id"] in paid}
         if any(post["id"] in saved for post in page):
             break
@@ -157,6 +159,10 @@ async def refresh_posts(http, path, pages):
 
     async def measure(post):
         async with head_slots, http.head(post["audio_url"], allow_redirects=True) as response:
+            # A rate-limited or failing server keeps the audio for the next refresh to measure.
+            if response.status == 429 or response.status >= 500:
+                log.warning("will measure %s later: its audio returned %d", post["url"], response.status)
+                return
             if response.status != 200 or "Content-Length" not in response.headers:
                 log.warning("leaving out %s: its audio returned %d without a size", post["url"], response.status)
                 post["audio_url"] = None
@@ -167,24 +173,24 @@ async def refresh_posts(http, path, pages):
 
     await asyncio.gather(*(measure(p) for p in posts.values() if p["audio_url"] and p["size"] is None))
     for post in posts.values():
-        if post["readable"] and post["audio_url"] is None and post["article"] is None and not awaits_audio(post):
-            try:
-                status, body = await substack_get(http, f"https://{urlsplit(post['url']).netloc}/api/v1/posts/{post['slug']}")
-            except Exception as error:
-                log.error("will retry %s: %r", post["url"], error)
-                continue
-            if status not in (200, 404):
-                log.error("will retry %s: it returned %d", post["url"], status)
-                continue
-            text = articles.speech_text(json.loads(body)["body_html"] or "<p></p>") if status == 200 else ""
-            if not text:
-                log.warning("leaving out %s: no text to read (status %d)", post["url"], status)
-                post["readable"] = False
-                continue
-            post["article"] = articles.save(post["url"], post["title"], post["published"], f"{post['title']}.\n{text}")
+        if post["readable"] and post["words"] and post["audio_url"] is None and post["article"] is None and not awaits_audio(post):
+            post["article"] = articles.save(post["url"], post["title"], post["published"], post["words"] + len(post["title"].split()),
+                                            {"substack_post": f"https://{urlsplit(post['url']).netloc}/api/v1/posts/{post['slug']}"})
     if posts != saved:
         path.write_text(json.dumps(list(posts.values())))
     return sorted(posts.values(), key=lambda p: p["published"], reverse=True)
+
+
+async def post_text(http, article):
+    """The text of an article saved from a Substack post, to read aloud."""
+    await paid_publications(http)  # signs in, for paid posts
+    status, body = await substack_get(http, article["substack_post"])
+    if status != 200:
+        raise HTTPException(502, f"{article['url']} returned {status}")
+    text = articles.speech_text(json.loads(body)["body_html"] or "<p></p>")
+    if not text:
+        raise HTTPException(404, f"{article['url']} has no text to read")
+    return f"{article['title']}.\n{text}"
 
 
 def artwork(image):
@@ -234,5 +240,5 @@ async def feed_xml(http, store, source, article_audio_base, private):
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
               **({"title": post["title"], "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
                  else articles.read_aloud_episode(post["title"], post["article"], article_audio_base, private))}
-             for post in posts if (post["audio_url"] or post["article"]) and (private or post["free"])]
+             for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["free"])]
     return podcast.feed_xml(**channel, items=items)

@@ -1,5 +1,6 @@
-"""Articles to read aloud, saved under STORE_DIR: each one's text and estimated audio size, and its
-audio from the server's model and voice, in finished chunks while it is read and whole once done."""
+"""Articles to read aloud, saved under STORE_DIR: each one's text, or for Substack posts the API URL to fetch it
+from on first play, and its estimated audio size, and its audio from the server's model and voice, in finished
+chunks while it is read and whole once done."""
 
 import hashlib
 import json
@@ -49,14 +50,14 @@ def estimated_size(words):
 def listing(article_id):
     """The saved article without its text."""
     article = json.loads(article_path(article_id).read_text())
-    del article["text"]
-    return article
+    return {key: article[key] for key in ("id", "url", "title", "published", "size")}
 
 
-def save(url, title, published, speech):
-    """Saves an article's text to be read aloud, and returns its listing."""
-    article = {"id": article_id(url), "url": url, "title": title, "published": published, "size": estimated_size(len(speech.split()))}
-    article_path(article["id"]).write_text(json.dumps({**article, "text": speech}))
+def save(url, title, published, words, content):
+    """Saves an article to be read aloud, with `content` holding its `text` or the `substack_post` API URL to
+    fetch it from, and returns its listing."""
+    article = {"id": article_id(url), "url": url, "title": title, "published": published, "size": estimated_size(words)}
+    article_path(article["id"]).write_text(json.dumps({**article, **content}))
     return article
 
 

@@ -101,7 +101,8 @@ class Library:
             text = await asyncio.to_thread(trafilatura.extract, html, favor_precision=True)
             if not text:
                 raise ValueError(f"no article text found at {entry['url']}")
-            return articles.save(entry["url"], entry["title"], entry["published"], f"{entry['title']}.\n{text}")
+            speech = f"{entry['title']}.\n{text}"
+            return articles.save(entry["url"], entry["title"], entry["published"], len(speech.split()), {"text": speech})
 
         results = await asyncio.gather(*(load(e) for e in entries), return_exceptions=True)
         for entry, result in zip(entries, results):
@@ -199,8 +200,21 @@ class Synthesis:
             self.data += piece
             self.changed.notify_all()
 
+    async def fail(self):
+        log.exception("synthesis failed for %s", self.article["id"])
+        async with self.changed:
+            self.failed = True
+            self.changed.notify_all()
+
     async def run(self):
         started = time.time()
+        if "text" not in self.article:
+            try:
+                self.article["text"] = await substack.post_text(self.http, self.article)
+            except Exception:
+                await self.fail()
+                raise
+            article_path(self.article["id"]).write_text(json.dumps(self.article))
         texts = tts.chunks(self.article["text"])
         chunks = [ChunkAudio() for _ in texts]
         folder = articles.chunk_dir(self.article["id"])
@@ -271,10 +285,7 @@ class Synthesis:
                 self.changed.notify_all()
             log.info("read %s with %s: %.0f s of audio in %.0f s", self.article["id"], tts.READER, len(self.data) / BYTES_PER_SECOND, time.time() - started)
         except Exception:
-            log.exception("synthesis failed for %s", self.article["id"])
-            async with self.changed:
-                self.failed = True
-                self.changed.notify_all()
+            await self.fail()
             raise
         finally:
             for task in (scheduler, *producers):
