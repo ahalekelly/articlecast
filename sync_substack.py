@@ -105,7 +105,11 @@ def main():
                 print(f"{url} failed: {error}", flush=True)
                 continue
             if "<item>" in xml:
-                state[key] = podcast_of(url)
+                try:
+                    state[key] = podcast_of(url)
+                except RuntimeError as error:
+                    print(error, flush=True)
+                    continue
                 if state[key] not in subscribed:
                     pocketcasts("https://api.pocketcasts.com/user/podcast/subscribe", {"uuid": state[key]})
                 state_path.write_text(json.dumps(state, indent=1))
