@@ -306,11 +306,13 @@ async def feed(request):
 
 
 async def substack_feed(request):
-    """Without the token, the feed's Gemini episodes link to an audio URL that refuses to play."""
+    """Without the token, the feed leaves out paid posts, and its Gemini episodes link to an audio URL that
+    refuses to play."""
     if "token" in request.path_params:
         check_token(request)
     audio_base = f"https://{request.url.netloc}/{TOKEN}/audio" if "token" in request.path_params else f"https://{request.url.netloc}/audio"
-    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], audio_base)
+    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], audio_base,
+                                   paid="token" in request.path_params)
     return Response(xml, media_type="application/rss+xml")
 
 
