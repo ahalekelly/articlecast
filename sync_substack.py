@@ -62,9 +62,10 @@ def wanted_feeds():
     for user_id in substack("feed/following"):
         if user_id in authors:
             continue
-        # The handle comes from the byline of a recent post, so authors without one wait until they publish.
+        # The handle comes from the byline of a recent post, so authors without one wait until they publish;
+        # users who never chose a handle get no feed.
         posts = substack(f"profile/posts?profile_user_id={user_id}&limit=50")["posts"]
-        feeds[f"user:{user_id}"] = [f"@{byline['handle']}" for post in posts for byline in post["publishedBylines"] if byline["id"] == user_id][:1]
+        feeds[f"user:{user_id}"] = [f"@{byline['handle']}" for post in posts for byline in post["publishedBylines"] if byline["id"] == user_id and byline["handle"]][:1]
     return feeds
 
 
