@@ -286,7 +286,7 @@ class Synthesis:
 
 
 def feed_xml(base, channel, listings):
-    items = [{"title": a["title"], "description": a["url"], "link": a["url"], "guid": a["id"], "published": a["published"],
+    items = [{"title": a["title"], "description": "", "link": a["url"], "guid": a["id"], "published": a["published"],
               **articles.enclosure(a, f"{base}/{TOKEN}/audio")} for a in listings]
     image = channel.get("image", {}).get("href")
     return podcast.feed_xml(title=channel["title"], link=channel.get("link", base), description=channel.get("subtitle", ""),

@@ -1,15 +1,21 @@
 """RSS for a podcast feed."""
 
 from email.utils import formatdate
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
+
+
+def notes(description, link):
+    """An episode's notes in HTML: its description, if any, then its link."""
+    return (f"<p>{escape(description)}</p>" if description else "") + f"<p><a href={quoteattr(link)}>{escape(link)}</a></p>"
 
 
 def feed_xml(title, link, description, author, image, items):
-    """Each item has a title, description, link, guid, published time, and an enclosure url, size, and duration."""
+    """Each item has a title, description (plain text, possibly empty), link, guid, published time, and an
+    enclosure url, size, and duration."""
     episodes = "".join(f"""
     <item>
       <title>{escape(i["title"])}</title>
-      <description>{escape(i["description"])}</description>
+      <description>{escape(notes(i["description"], i["link"]))}</description>
       <link>{escape(i["link"])}</link>
       <guid isPermaLink="false">{escape(i["guid"])}</guid>
       <pubDate>{formatdate(i["published"], usegmt=True)}</pubDate>

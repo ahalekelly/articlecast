@@ -116,7 +116,7 @@ async def feed_xml(http, store, slug, article_audio_base, private):
         refreshes[slug] = (time.time(), task)
     user, episodes = await asyncio.shield(task)
     # Built on every request, so episodes Gemini has read show their final size.
-    items = [{"description": e["url"], "link": e["url"], "guid": f"lesswrong-{e['id']}", "published": e["published"],
+    items = [{"description": "", "link": e["url"], "guid": f"lesswrong-{e['id']}", "published": e["published"],
               **({"title": e["title"], **e["audio"]} if e["audio"] else articles.read_aloud_episode(e["title"], e["article"], article_audio_base, private))}
              for e in episodes if not lacks_narration(e, NARRATION_WAIT_SECONDS)]
     return podcast.feed_xml(title=f"{user['displayName']} on LessWrong", link=f"https://www.lesswrong.com/users/{slug}",
