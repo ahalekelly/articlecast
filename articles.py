@@ -1,4 +1,4 @@
-"""Articles to read aloud, saved under STORE_DIR: each one's text, or for Substack posts the API URL to fetch it
+"""Articles to read aloud, saved under STORE_DIR: each one's text, or for Substack posts the post id to fetch it
 from on first play, and its estimated audio size, and its audio from the server's model and voice, in finished
 chunks while it is read and whole once done."""
 
@@ -55,8 +55,8 @@ def listing(article_id):
 
 
 def save(url, title, published, words, content):
-    """Saves an article to be read aloud, with `content` holding its `text` or the `substack_post` API URL to
-    fetch it from, and returns its listing."""
+    """Saves an article to be read aloud, with `content` holding its `text` or the id of the
+    `substack_post` to fetch it from, and returns its listing."""
     article = {"id": article_id(url), "url": url, "title": title, "published": published, "size": estimated_size(words)}
     article_path(article["id"]).write_text(json.dumps({**article, **content}))
     return article

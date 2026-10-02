@@ -18,7 +18,7 @@ import time
 from calendar import timegm
 from datetime import datetime
 from http.cookies import SimpleCookie
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import feedparser
 from yarl import URL
@@ -184,15 +184,15 @@ async def refresh_posts(http, path, pages):
         if readable(post, paid) and post["words"] and post["audio_url"] is None and (post["article"] is None or post["opening_words"] is not None) and not awaits_audio(post):
             post["opening_words"] = None
             post["article"] = articles.save(post["url"], post["title"], post["published"], post["words"] + len(post["title"].split()),
-                                            {"substack_post": f"https://{urlsplit(post['url']).netloc}/api/v1/posts/{post['slug']}"})
+                                            {"substack_post": post["id"]})
     unreadable = sorted((p for p in posts.values() if not readable(p, paid) and p["audio_url"] is None), key=lambda p: p["published"], reverse=True)
     for post in unreadable[:PREVIEWS]:
         if post["opening_words"] is None:
-            status, body = await substack_get(http, f"https://{urlsplit(post['url']).netloc}/api/v1/posts/{post['slug']}")
+            status, body = await substack_get(http, post_url(post["id"]))
             if status != 200:
                 log.error("will retry the opening of %s: it returned %d", post["url"], status)
                 continue
-            text = articles.speech_text(json.loads(body)["body_html"] or "<p></p>")
+            text = articles.speech_text(json.loads(body)["post"]["body_html"] or "<p></p>")
             post["opening_words"] = len(text.split())
             if post["opening_words"] >= PREVIEW_MIN_WORDS:
                 speech = f"{post['title']}.\n{text}\nThe rest of this post is for paid subscribers."
@@ -202,13 +202,18 @@ async def refresh_posts(http, path, pages):
     return sorted(posts.values(), key=lambda p: p["published"], reverse=True)
 
 
+def post_url(post_id):
+    """A post with its text, served by substack.com, which also answers for publications whose custom domain is gone."""
+    return f"https://substack.com/api/v1/posts/by-id/{post_id}"
+
+
 async def post_text(http, article):
     """The text of an article saved from a Substack post, to read aloud."""
     await paid_publications(http)  # signs in, for paid posts
-    status, body = await substack_get(http, article["substack_post"])
+    status, body = await substack_get(http, post_url(article["substack_post"]))
     if status != 200:
         raise HTTPException(502, f"{article['url']} returned {status}")
-    text = articles.speech_text(json.loads(body)["body_html"] or "<p></p>")
+    text = articles.speech_text(json.loads(body)["post"]["body_html"] or "<p></p>")
     if not text:
         raise HTTPException(404, f"{article['url']} has no text to read")
     return f"{article['title']}.\n{text}"

@@ -15,7 +15,7 @@ Send the `substack.sid` cookie of a signed-in browser session. It covers `substa
 | `GET substack.com/api/v1/user/<handle>/public_profile` | A user's `id`, `name`, `bio`, `photo_url` |
 | `GET substack.com/api/v1/profile/posts?profile_user_id=<id>&limit=50&next_cursor=<cursor>` | Posts the user wrote, posts in publications they own, and posts they restacked (`type` `restack`), newest first, with `nextCursor` |
 | `GET <publication>/api/v1/archive?sort=new&offset=<n>&limit=50` | A publication's posts, newest first, without their text |
-| `GET <publication>/api/v1/posts/<slug>` | One post with `body_html`; empty for paid posts unless signed in to a paid subscription |
+| `GET substack.com/api/v1/posts/by-id/<post id>` | `{"post": ...}`: one post with `body_html`, the free opening of a paid post unless the cookie's user pays for it; answers for publications whose custom domain is gone |
 
 Posts carry `audience` (`everyone` for free), `publication_id`, `publishedBylines`, and `audio_items`, whose completed `tts` item has an `audio_url` that downloads without signing in. Requests from one IP are rate limited with 429 and `Retry-After`; requests made too quickly also get their connections reset.
 
@@ -25,6 +25,6 @@ Posts carry `audience` (`everyone` for free), `publication_id`, `publishedByline
 |---|---|
 | `POST substack.com/api/v1/feed/<user id>/follow` | Follow a user |
 | `DELETE substack.com/api/v1/feed/<user id>/follow` | Unfollow a user |
-| `DELETE <publication>/api/v1/free` with JSON `{"publication_id": <id>}` | Unsubscribe from a free subscription |
+| `DELETE substack.com/api/v1/free` with JSON `{"publication_id": <id>}` | Unsubscribe from a free subscription; the publication's own host also answers |
 
 Account actions send the cookie and a JSON content type.
