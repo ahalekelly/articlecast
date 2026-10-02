@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import time
 from pathlib import Path
 
 import lxml.html
@@ -61,10 +62,18 @@ def save(url, title, published, words, content):
     return article
 
 
+# Finished audio sizes by article id, and when they were listed. Feeds list thousands of articles, and
+# checking each one's file on the storage mount takes minutes, so the folder is listed at most every 10 s.
+finished = (0.0, {})
+
+
 def enclosure(listing, audio_base):
     """The enclosure of a listed article, sized to its audio once synthesized."""
-    path = audio_path(listing["id"])
-    size = path.stat().st_size if path.exists() else listing["size"]
+    global finished
+    if time.time() - finished[0] > 10:
+        folder = STORE / "audio" / tts.READER
+        finished = (time.time(), {entry.name.removesuffix(".mp3"): entry.stat().st_size for entry in os.scandir(folder)})
+    size = finished[1].get(listing["id"], listing["size"])
     return {"url": f"{audio_base}/{listing['id']}.mp3", "size": size, "duration": size // BYTES_PER_SECOND}
 
 
