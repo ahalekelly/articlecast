@@ -43,7 +43,7 @@ def substack(path):
             if error.code != 429:
                 raise
             time.sleep(int(error.headers.get("Retry-After", 10)))
-        except urllib.error.URLError:  # Substack also resets connections from clients that ask too fast
+        except OSError:  # Substack also resets or stalls connections from clients that ask too fast
             time.sleep(30)
     raise RuntimeError(f"Substack's {path} still refuses requests")
 
@@ -102,7 +102,7 @@ def main():
             url = f"{FEEDS}/{source}/feed.xml"
             try:
                 xml = fetch(url, timeout=1800).decode()  # a first request reads the whole archive
-            except (urllib.error.URLError, TimeoutError) as error:
+            except OSError as error:
                 print(f"{url} failed: {error}", flush=True)
                 continue
             if "<item>" in xml:
