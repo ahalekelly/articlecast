@@ -2,10 +2,10 @@
 
 Substack's undocumented archive API lists every post of a publication, and its profile API every post an
 author wrote in any publication, each with its TTS MP3 on S3, or for podcast posts the episode's MP3. The
-feed links those files directly. Requests are signed in as the owner's Substack account, so posts of
-publications they pay for come with their audio and text. Readable posts still without audio an hour after
-publishing are saved as articles to read aloud, sized from their word count; their text is fetched on first
-play, which keeps a first refresh to the archive pages. Paid posts the owner can't read often open with free
+feed links those files directly. Requests are signed in as the owner's Substack account, so subscriber-only
+posts of publications they subscribe to, and paid posts of those they pay for, come with their audio and
+text. Readable posts still without audio an hour after publishing are saved as articles to read aloud, sized from their word count; their text is fetched on first
+play, which keeps a first refresh to the archive pages. Posts the owner can't read often open with free
 text before the paywall; for the newest few, that opening is fetched during refresh and read as a preview. Each feed's posts are saved as JSON, and a refresh
 fetches only pages newer than the saved posts.
 """
@@ -31,7 +31,7 @@ FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
 # A new free post waits this long for Substack's TTS, out of the feed, before Gemini reads it instead.
 TTS_WAIT_SECONDS = 3600
-# The free openings of each feed's newest paid posts the owner can't read are read aloud when this long.
+# The free openings of each feed's newest posts the owner can't read are read aloud when this long.
 PREVIEWS = 10
 PREVIEW_MIN_WORDS = 300
 
@@ -44,8 +44,10 @@ log = logging.getLogger("articlecast")
 refreshes = {}
 # Substack rate-limits requests from one IP across all publications, so they go one at a time.
 substack_turn = asyncio.Lock()
-# Task signing in to Substack, which returns the ids of publications the owner pays for
+# Task signing in to Substack, which returns the owner's subscriptions
 sign_in_task = None
+# Custom domains of publications the owner subscribes to that the session is signed in to
+signed_in_domains = set()
 
 
 async def substack_get(http, url):
@@ -61,8 +63,8 @@ async def substack_get(http, url):
 
 
 async def sign_in(http):
-    """Gives the session the owner's Substack cookie, which covers *.substack.com, and a session on the custom
-    domain of each publication they pay for, which Substack's sign-in redirect hands out to signed-in readers."""
+    """Gives the session the owner's Substack cookie, which covers *.substack.com, and returns their subscriptions
+    by publication id."""
     cookie = SimpleCookie()
     cookie["substack.sid"] = quote(SUBSTACK_SID, safe="")
     cookie["substack.sid"]["domain"] = "substack.com"
@@ -70,17 +72,14 @@ async def sign_in(http):
     status, body = await substack_get(http, "https://substack.com/api/v1/user/profile/self")
     if status != 200:
         raise RuntimeError(f"Substack profile returned {status}: SUBSTACK_SID is no longer signed in")
-    paid = [s["publication"] for s in json.loads(body)["subscriptions"] if s["membership_state"] == "subscribed"]
-    for publication in paid:
-        status, _ = await substack_get(http, f"https://substack.com/sign-in?redirect=%2F&for_pub={publication['subdomain']}")
-        if status != 200:
-            raise RuntimeError(f"signing in to {publication['subdomain']} returned {status}")
-    log.info("signed in to Substack; paid publications: %s", ", ".join(p["subdomain"] for p in paid))
-    return {p["id"] for p in paid}
+    subscriptions = {s["publication"]["id"]: s for s in json.loads(body)["subscriptions"]}
+    log.info("signed in to Substack; paid publications: %s",
+             ", ".join(s["publication"]["subdomain"] for s in subscriptions.values() if s["membership_state"] == "subscribed"))
+    return subscriptions
 
 
-async def paid_publications(http):
-    """Ids of the publications the owner pays for, signing in on first use and again after a failed sign-in."""
+async def owner_subscriptions(http):
+    """The owner's subscriptions by publication id, signing in on first use and again after a failed sign-in."""
     global sign_in_task
     if sign_in_task is None or sign_in_task.done() and sign_in_task.exception():
         sign_in_task = asyncio.create_task(sign_in(http))
@@ -106,9 +105,11 @@ def description(post):
     return f"{byline} {post['subtitle'] or ''}".strip()
 
 
-def readable(post, paid):
-    """Whether the owner can read a post: it is free, or its publication is one of the `paid` ids."""
-    return post["free"] or post["publication_id"] in paid
+def readable(post, subscriptions):
+    """Whether the owner can read a post: it is free, it is for subscribers and they subscribe, or they pay."""
+    subscription = subscriptions.get(post["publication_id"])
+    return (post["audience"] == "everyone" or subscription is not None
+            and (post["audience"] == "only_subscribers" or subscription["membership_state"] == "subscribed"))
 
 
 def awaits_audio(post):
@@ -146,7 +147,7 @@ async def author_pages(http, user_id):
 
 async def refresh_posts(http, path, pages):
     """Adds posts from `pages` newer than the saved ones to the file at `path`, and returns all posts, newest first."""
-    paid = await paid_publications(http)
+    subscriptions = await owner_subscriptions(http)
     saved = {p["id"]: p for p in json.loads(path.read_text())} if path.exists() else {}
     posts = {id: dict(post) for id, post in saved.items()}
     async for page in pages:
@@ -158,7 +159,7 @@ async def refresh_posts(http, path, pages):
                 "id": post["id"], "slug": post["slug"], "title": post["title"], "description": description(post),
                 "url": post["canonical_url"], "published": timegm(datetime.fromisoformat(post["post_date"]).utctimetuple()),
                 "audio_url": audio_url, "size": old["size"] if same_audio else None, "duration": old["duration"] if same_audio else duration,
-                "free": post["audience"] == "everyone", "article": old["article"] if old else None,
+                "audience": post["audience"], "article": old["article"] if old else None,
                 "publication_id": post["publication_id"], "words": post["wordcount"], "opening_words": old["opening_words"] if old else None}
         if any(post["id"] in saved for post in page):
             break
@@ -180,12 +181,12 @@ async def refresh_posts(http, path, pages):
 
     await asyncio.gather(*(measure(p) for p in posts.values() if p["audio_url"] and p["size"] is None))
     for post in posts.values():
-        # A preview gives way to the whole post once its publication is paid for.
-        if readable(post, paid) and post["words"] and post["audio_url"] is None and (post["article"] is None or post["opening_words"] is not None) and not awaits_audio(post):
+        # A preview gives way to the whole post once the owner can read it.
+        if readable(post, subscriptions) and post["words"] and post["audio_url"] is None and (post["article"] is None or post["opening_words"] is not None) and not awaits_audio(post):
             post["opening_words"] = None
             post["article"] = articles.save(post["url"], post["title"], post["published"], post["words"] + len(post["title"].split()),
                                             {"substack_post": post["id"]})
-    unreadable = sorted((p for p in posts.values() if not readable(p, paid) and p["audio_url"] is None), key=lambda p: p["published"], reverse=True)
+    unreadable = sorted((p for p in posts.values() if not readable(p, subscriptions) and p["audio_url"] is None), key=lambda p: p["published"], reverse=True)
     for post in unreadable[:PREVIEWS]:
         if post["opening_words"] is None:
             status, body = await substack_get(http, post_url(post["id"]))
@@ -195,7 +196,7 @@ async def refresh_posts(http, path, pages):
             text = articles.speech_text(json.loads(body)["post"]["body_html"] or "<p></p>")
             post["opening_words"] = len(text.split())
             if post["opening_words"] >= PREVIEW_MIN_WORDS:
-                speech = f"{post['title']}.\n{text}\nThe rest of this post is for paid subscribers."
+                speech = f"{post['title']}.\n{text}\nThe rest of this post is for {'subscribers' if post['audience'] == 'only_subscribers' else 'paid subscribers'}."
                 post["article"] = articles.save(post["url"], post["title"], post["published"], len(speech.split()), {"text": speech})
     if posts != saved:
         path.write_text(json.dumps(list(posts.values())))
@@ -209,7 +210,7 @@ def post_url(post_id):
 
 async def post_text(http, article):
     """The text of an article saved from a Substack post, to read aloud."""
-    await paid_publications(http)  # signs in, for paid posts
+    await owner_subscriptions(http)  # signs in, for posts that need it
     status, body = await substack_get(http, post_url(article["substack_post"]))
     if status != 200:
         raise HTTPException(502, f"{article['url']} returned {status}")
@@ -227,6 +228,14 @@ def artwork(image):
 
 
 async def refresh_publication(http, path, host):
+    # Substack's sign-in redirect hands signed-in readers a session on the custom domain of a publication they
+    # subscribe to, without which its archive paywalls the audio of posts they can read.
+    subscription = next((s for s in (await owner_subscriptions(http)).values() if s["publication"]["custom_domain"] == host), None)
+    if subscription and host not in signed_in_domains:
+        status, _ = await substack_get(http, f"https://substack.com/sign-in?redirect=%2F&for_pub={subscription['publication']['subdomain']}")
+        if status != 200:
+            raise RuntimeError(f"signing in to {host} returned {status}")
+        signed_in_domains.add(host)
     status, body = await substack_get(http, f"https://{host}/feed")
     channel = feedparser.parse(body).feed if status == 200 else {}
     # The feed is public, so it only serves real Substack publications.
@@ -252,7 +261,7 @@ async def refresh_author(http, path, handle):
 
 async def feed_xml(http, store, source, article_audio_base, private):
     """The feed of `source`, a publication host or an @ and an author's handle. Unless `private`, it leaves out
-    paid posts, and posts without Substack audio play a notice instead of being read aloud."""
+    posts that need signing in, and posts without Substack audio play a notice instead of being read aloud."""
     started, task = refreshes.get(source, (0, None))
     if time.time() - started > FEED_REFRESH_SECONDS:
         path = store / f"{source}.json"
@@ -262,10 +271,10 @@ async def feed_xml(http, store, source, article_audio_base, private):
     # A first refresh pages through the whole archive; shielding it keeps that work for the next request
     # if the client gives up.
     channel, posts = await asyncio.shield(task)
-    paid = await paid_publications(http)
+    subscriptions = await owner_subscriptions(http)
     # Built on every request, so episodes Gemini has read show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
               **({"title": post["title"], "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
-                 else articles.read_aloud_episode(post["title"] if readable(post, paid) else f"Preview: {post['title']}", post["article"], article_audio_base, private))}
-             for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["free"])]
+                 else articles.read_aloud_episode(post["title"] if readable(post, subscriptions) else f"Preview: {post['title']}", post["article"], article_audio_base, private))}
+             for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["audience"] == "everyone")]
     return podcast.feed_xml(**channel, items=items)

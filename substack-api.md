@@ -4,7 +4,7 @@ Substack's web app calls an undocumented JSON API. These are the endpoints Artic
 
 ## Signing in
 
-Send the `substack.sid` cookie of a signed-in browser session. It covers `substack.com` and `*.substack.com`; each request extends it by 90 days. A publication on a custom domain needs its own session: requesting `https://substack.com/sign-in?redirect=%2F&for_pub=<subdomain>` with the cookie, following redirects, sets that domain's `connect.sid`.
+Send the `substack.sid` cookie of a signed-in browser session. It covers `substack.com` and `*.substack.com`; each request extends it by 90 days. A publication on a custom domain needs its own session, without which its archive paywalls the audio of posts the user can read: requesting `https://substack.com/sign-in?redirect=%2F&for_pub=<subdomain>` with the cookie, following redirects, sets that domain's `connect.sid`.
 
 ## Reading
 
@@ -17,7 +17,7 @@ Send the `substack.sid` cookie of a signed-in browser session. It covers `substa
 | `GET <publication>/api/v1/archive?sort=new&offset=<n>&limit=50` | A publication's posts, newest first, without their text |
 | `GET substack.com/api/v1/posts/by-id/<post id>` | `{"post": ...}`: one post with `body_html`, the free opening of a paid post unless the cookie's user pays for it; answers for publications whose custom domain is gone |
 
-Posts carry `audience` (`everyone` for free), `publication_id`, `publishedBylines`, and `audio_items`, whose completed `tts` item has an `audio_url` that downloads without signing in. Requests from one IP are rate limited with 429 and `Retry-After`; requests made too quickly also get their connections reset.
+Posts carry `audience` (`everyone`, `only_subscribers` for free subscribers, `only_paid`, `founding`), `publication_id`, `publishedBylines`, and `audio_items`, whose completed `tts` item has an `audio_url` that downloads without signing in. Requests from one IP are rate limited with 429 and `Retry-After`; requests made too quickly also get their connections reset.
 
 ## Account actions
 
