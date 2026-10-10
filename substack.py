@@ -106,10 +106,12 @@ def description(post):
 
 
 def readable(post, subscriptions):
-    """Whether the owner can read a post: it is free, it is for subscribers and they subscribe, or they pay."""
+    """Whether the owner can read a post: it is free, or their subscription to its publication covers its audience."""
     subscription = subscriptions.get(post["publication_id"])
-    return (post["audience"] == "everyone" or subscription is not None
-            and (post["audience"] == "only_subscribers" or subscription["membership_state"] == "subscribed"))
+    return post["audience"] == "everyone" or subscription is not None and (
+        post["audience"] == "only_subscribers"
+        or post["audience"] == "only_paid" and subscription["membership_state"] == "subscribed"
+        or post["audience"] == "founding" and subscription["is_founding"])
 
 
 def awaits_audio(post):
