@@ -6,7 +6,9 @@ feed links those files directly. Requests are signed in as the owner's Substack 
 posts of publications they subscribe to, and paid posts of those they pay for, come with their audio and
 text. Readable posts still without audio an hour after publishing are saved as articles to read aloud, sized from their word count; their text is fetched on first
 play, which keeps a first refresh to the archive pages. Posts the owner can't read often open with free
-text before the paywall; for the newest few, that opening is fetched during refresh and read as a preview. Each feed's posts are saved as JSON, and a refresh
+text before the paywall; for the newest few, that opening is fetched during refresh and read as a preview. Both
+APIs also list posts of other publications that the publication or author restacked, which keep their original's
+id, audio, and text, and are titled with that publication's name. Each feed's posts are saved as JSON, and a refresh
 fetches only pages newer than the saved posts.
 """
 
@@ -133,15 +135,14 @@ async def archive_pages(http, host):
 
 
 async def author_pages(http, user_id):
-    """Pages of the posts a user wrote in any publication, or published in one they own, newest first."""
+    """Pages of the posts a user wrote in any publication, published in one they own, or restacked, newest first."""
     cursor = ""
     while True:
         status, body = await substack_get(http, f"https://substack.com/api/v1/profile/posts?profile_user_id={user_id}&limit=50&next_cursor={quote(cursor)}")
         if status != 200:
             raise RuntimeError(f"profile API returned {status} for user {user_id}")
         page = json.loads(body)
-        # Besides the user's posts, the profile lists other people's posts they restacked.
-        yield [post for post in page["posts"] if post["type"] != "restack"]
+        yield page["posts"]
         cursor = page.get("nextCursor")
         if not cursor:
             return
@@ -154,16 +155,21 @@ async def refresh_posts(http, path, pages):
     posts = {id: dict(post) for id, post in saved.items()}
     async for page in pages:
         for post in page:
+            # A restack takes its original's id, which serves its text, so a post listed with its restack, as a
+            # co-author's profile does, is one episode, titled as the post.
+            id = post["restacked_post_id"] or post["id"]
+            if post["type"] == "restack" and id in posts and posts[id]["restacked_from"] is None:
+                continue
             audio_url, duration = own_audio(post)
-            old = saved.get(post["id"])
+            old = saved.get(id)
             same_audio = old and old["audio_url"] == audio_url
-            posts[post["id"]] = {
-                "id": post["id"], "slug": post["slug"], "title": post["title"], "description": description(post),
+            posts[id] = {
+                "id": id, "restacked_from": post["restacked_pub_name"], "slug": post["slug"], "title": post["title"], "description": description(post),
                 "url": post["canonical_url"], "published": timegm(datetime.fromisoformat(post["post_date"]).utctimetuple()),
                 "audio_url": audio_url, "size": old["size"] if same_audio else None, "duration": old["duration"] if same_audio else duration,
                 "audience": post["audience"], "article": old["article"] if old else None,
                 "publication_id": post["publication_id"], "words": post["wordcount"], "opening_words": old["opening_words"] if old else None}
-        if any(post["id"] in saved for post in page):
+        if any((post["restacked_post_id"] or post["id"]) in saved for post in page):
             break
     head_slots = asyncio.Semaphore(16)
 
@@ -222,6 +228,10 @@ async def post_text(http, article):
     return f"{article['title']}.\n{text}"
 
 
+def episode_title(post):
+    return f"Restack - {post['restacked_from']}: {post['title']}" if post["restacked_from"] else post["title"]
+
+
 def artwork(image):
     """Podcast apps draw transparency black, which hides logos drawn as cut-outs, so Substack's image CDN
     serves the full-size original flattened onto white."""
@@ -276,7 +286,7 @@ async def feed_xml(http, store, source, article_audio_base, private):
     subscriptions = await owner_subscriptions(http)
     # Built on every request, so episodes Gemini has read show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
-              **({"title": post["title"], "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
-                 else articles.read_aloud_episode(post["title"] if readable(post, subscriptions) else f"Preview: {post['title']}", post["article"], article_audio_base, private))}
+              **({"title": episode_title(post), "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
+                 else articles.read_aloud_episode(episode_title(post) if readable(post, subscriptions) else f"Preview: {episode_title(post)}", post["article"], article_audio_base, private))}
              for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["audience"] == "everyone")]
     return podcast.feed_xml(**channel, items=items)
