@@ -93,23 +93,23 @@ def chunks(text):
     return packed
 
 
-async def stream(http, text, language):
-    """Yields the PCM of `text`, in the BCP 47 `language`, read aloud as it arrives."""
+async def stream(http, text, language, voice):
+    """Yields the PCM of `text`, in the BCP 47 `language`, read aloud by `voice` as it arrives."""
     received = 0
-    async for pcm in provider_stream(http, text, language):
+    async for pcm in provider_stream(http, text, language, voice):
         received += len(pcm)
         yield pcm
     if not received:
         raise RuntimeError(f"{MODEL} returned no audio")
 
 
-async def provider_stream(http, text, language):
+async def provider_stream(http, text, language, voice):
     global free_quota_resets
     if MODEL.startswith("MAI-"):
         # MAI reads square brackets as delivery tags: an unknown one is dropped, starts a sentence with a 400, or
         # stalls a long request. Curly braces also lose words. Parentheses read as written.
         text = text.translate(str.maketrans("[]{}", "()()"))
-        ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{language}"><voice name="{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
+        ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{language}"><voice name="{voice}:{MODEL}">{escape(text)}</voice></speak>'
         keys = [AZURE_SPEECH_KEY] if time.time() < free_quota_resets else [AZURE_SPEECH_FREE_KEY, AZURE_SPEECH_KEY]
         for key in keys:
             async with http.post(f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={
@@ -131,7 +131,7 @@ async def provider_stream(http, text, language):
     responses = await gemini.aio.models.generate_content_stream(model=MODEL, contents=text, config=types.GenerateContentConfig(
         response_modalities=["AUDIO"],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)))))
+        speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)))))
     async for response in responses:
         for part in response.candidates[0].content.parts or []:
             if part.inline_data:
