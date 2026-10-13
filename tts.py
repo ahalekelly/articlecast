@@ -25,7 +25,7 @@ GEMINI_VOICES = (
 # MAI voices are named with their locale. A voice reads text in another language with its own accent,
 # so fr-FR-Marc reading en-US text gives French-accented English.
 MAI_VOICES = ("en-US-Harper", "en-US-Olivia", "en-US-Iris", "en-US-Ethan", "en-US-Grant", "en-US-Jasper", "en-US-Sage",
-              "fr-FR-Marc", "fr-FR-Soleil")
+              "fr-FR-Marc", "fr-FR-Soleil", "fr-FR-Grant", "fr-FR-Harper")
 MODELS = {
     "gemini-3.8-flash-tts": GEMINI_VOICES,
     "gemini-3.8-flash-lite-tts": GEMINI_VOICES,
