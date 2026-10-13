@@ -22,7 +22,10 @@ GEMINI_VOICES = (
     "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix", "Sadachbia",
     "Sadaltager", "Sulafat",
 )
-MAI_VOICES = ("Harper", "Olivia", "Iris", "Ethan", "Grant", "Jasper", "Sage")  # US English
+# MAI voices are named with their locale. A voice reads text in another language with its own accent,
+# so fr-FR-Marc reading en-US text gives French-accented English.
+MAI_VOICES = ("en-US-Harper", "en-US-Olivia", "en-US-Iris", "en-US-Ethan", "en-US-Grant", "en-US-Jasper", "en-US-Sage",
+              "fr-FR-Marc", "fr-FR-Soleil")
 MODELS = {
     "gemini-3.8-flash-tts": GEMINI_VOICES,
     "gemini-3.8-flash-lite-tts": GEMINI_VOICES,
@@ -90,23 +93,23 @@ def chunks(text):
     return packed
 
 
-async def stream(http, text):
-    """Yields the PCM of `text` read aloud as it arrives."""
+async def stream(http, text, language):
+    """Yields the PCM of `text`, in the BCP 47 `language`, read aloud as it arrives."""
     received = 0
-    async for pcm in provider_stream(http, text):
+    async for pcm in provider_stream(http, text, language):
         received += len(pcm)
         yield pcm
     if not received:
         raise RuntimeError(f"{MODEL} returned no audio")
 
 
-async def provider_stream(http, text):
+async def provider_stream(http, text, language):
     global free_quota_resets
     if MODEL.startswith("MAI-"):
         # MAI reads square brackets as delivery tags: an unknown one is dropped, starts a sentence with a 400, or
         # stalls a long request. Curly braces also lose words. Parentheses read as written.
         text = text.translate(str.maketrans("[]{}", "()()"))
-        ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="en-US-{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
+        ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{language}"><voice name="{VOICE}:{MODEL}">{escape(text)}</voice></speak>'
         keys = [AZURE_SPEECH_KEY] if time.time() < free_quota_resets else [AZURE_SPEECH_FREE_KEY, AZURE_SPEECH_KEY]
         for key in keys:
             async with http.post(f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1", data=ssml.encode(), headers={

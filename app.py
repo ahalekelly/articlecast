@@ -226,7 +226,7 @@ class Synthesis:
                 for attempt, delay in enumerate((0, *RETRY_DELAYS)):
                     await asyncio.sleep(delay)
                     try:
-                        async for pcm in tts.stream(self.http, texts[i]):
+                        async for pcm in tts.stream(self.http, texts[i], "en-US"):
                             await chunks[i].update(pcm)
                         break
                     except Exception as error:
