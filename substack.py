@@ -8,8 +8,8 @@ text. Readable posts still without audio an hour after publishing are saved as a
 play, which keeps a first refresh to the archive pages. Posts the owner can't read often open with free
 text before the paywall; for the newest few, that opening is fetched during refresh and read as a preview. Both
 APIs also list posts of other publications that the publication or author restacked, which keep their original's
-id, audio, and text, and are titled with that publication's name. Each feed's posts are saved as JSON, and a refresh
-fetches only pages newer than the saved posts.
+id, audio, and text, and are titled with that publication's name. Podcast posts, including video posts, are
+titled "Pod: …". Each feed's posts are saved as JSON, and a refresh fetches only pages newer than the saved posts.
 """
 
 import asyncio
@@ -164,7 +164,7 @@ async def refresh_posts(http, path, pages):
             old = saved.get(id)
             same_audio = old and old["audio_url"] == audio_url
             posts[id] = {
-                "id": id, "restacked_from": post["restacked_pub_name"], "slug": post["slug"], "title": post["title"], "description": description(post),
+                "id": id, "restacked_from": post["restacked_pub_name"], "podcast": post["type"] == "podcast", "slug": post["slug"], "title": post["title"], "description": description(post),
                 "url": post["canonical_url"], "published": timegm(datetime.fromisoformat(post["post_date"]).utctimetuple()),
                 "audio_url": audio_url, "size": old["size"] if same_audio else None, "duration": old["duration"] if same_audio else duration,
                 "audience": post["audience"], "article": old["article"] if old else None,
@@ -229,7 +229,8 @@ async def post_text(http, article):
 
 
 def episode_title(post):
-    return f"Restack - {post['restacked_from']}: {post['title']}" if post["restacked_from"] else post["title"]
+    title = f"Pod: {post['title']}" if post["podcast"] else post["title"]
+    return f"Restack - {post['restacked_from']}: {title}" if post["restacked_from"] else title
 
 
 def artwork(image):
