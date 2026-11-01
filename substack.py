@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from calendar import timegm
 from datetime import datetime
@@ -254,7 +255,14 @@ async def refresh_publication(http, path, host):
     # The feed is public, so it only serves real Substack publications.
     if channel.get("generator") != "Substack":
         raise HTTPException(404, f"{host} is not a Substack publication")
-    image = channel.get("image", {}).get("href")
+    # The homepage embeds the publication as JSON. Publications without a logo use their owner's photo, where
+    # the feed has Substack's generic logo.
+    status, body = await substack_get(http, f"https://{host}/")
+    preloads = re.search(rb'<script[^>]*id="preloads-json"[^>]*>(.*?)</script>', body, re.S) if status == 200 else None
+    if not preloads:
+        raise RuntimeError(f"the homepage of {host} returned {status} without its publication data")
+    publication = json.loads(preloads[1])["pub"]
+    image = publication["logo_url"] or publication["author_photo_url"]
     return ({"title": channel["title"], "link": f"https://{host}", "description": channel.get("description", ""),
              "author": channel.get("author", channel["title"]), "image": image and artwork(image)},
             await refresh_posts(http, path, archive_pages(http, host)))

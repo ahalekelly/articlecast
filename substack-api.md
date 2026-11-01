@@ -14,6 +14,7 @@ Send the `substack.sid` cookie of a signed-in browser session. It covers `substa
 | `GET substack.com/api/v1/feed/following` | IDs of users the signed-in user follows, including themselves |
 | `GET substack.com/api/v1/user/<handle>/public_profile` | A user's `id`, `name`, `bio`, `photo_url` |
 | `GET substack.com/api/v1/profile/posts?profile_user_id=<id>&limit=50&next_cursor=<cursor>` | Posts the user wrote, posts in publications they own, and posts they restacked, newest first, with `nextCursor` |
+| `GET <publication>/` | The homepage, whose `<script id="preloads-json">` holds `pub` with `logo_url` and `author_photo_url`, each null if unset |
 | `GET <publication>/api/v1/archive?sort=new&offset=<n>&limit=50` | A publication's posts, newest first, without their text |
 | `GET substack.com/api/v1/posts/by-id/<post id>` | `{"post": ...}`: one post with `body_html`, the free opening of a paid post unless the cookie's user pays for it; answers for publications whose custom domain is gone |
 
