@@ -144,6 +144,9 @@ class ChunkAudio:
             whole = len(self.pcm) & ~1
             piece = bytes(self.pcm[self.taken : whole])
             self.taken = whole
+            if not piece:
+                # Done and saved to its file, so a long article doesn't hold all its PCM in memory.
+                self.pcm = None
             return piece or None
 
 
@@ -234,9 +237,9 @@ class Synthesis:
                             raise
                         log.warning("%s chunk %d attempt %d failed, retrying: %r", self.article["id"], i, attempt + 1, error)
                         await chunks[i].update(restart=True)
-                await chunks[i].update(done=True)
                 # Saves exactly the whole samples the encoder reads, so a restarted reading encodes the same bytes.
                 (folder / f"{i}.pcm").write_bytes(chunks[i].pcm[: len(chunks[i].pcm) & ~1])
+                await chunks[i].update(done=True)
             except Exception as error:
                 await chunks[i].update(error=error)
             finally:
