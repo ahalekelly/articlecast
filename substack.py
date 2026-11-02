@@ -91,11 +91,15 @@ async def owner_subscriptions(http):
 
 def own_audio(post):
     """The URL and duration of a post's own audio: Substack's TTS, whose duration follows from its size, or its
-    podcast episode, whose duration is 0 until Substack knows it."""
+    podcast episode, whose duration is 0 until Substack knows it. Readers who don't pay get a few minutes of a
+    paid episode, so they get the whole episode, with ads, from the publication's public podcast where it has one."""
     tts = next((item["audio_url"] for item in post.get("audio_items") or []
                 if item["type"] == "tts" and item["status"] == "completed" and item["audio_url"]), None)
     if tts:
         return tts, None
+    public = post["podcastFields"] and post["podcastFields"]["free_podcast_url"]
+    if post["podcastUpload"] and post["podcastUpload"].get("is_free_preview") and public:
+        return public, int(post["podcastFields"]["free_podcast_duration"] or 0)
     if post["podcast_url"]:
         return post["podcast_url"], int(post["podcast_duration"] or 0)
     return None, None
@@ -115,6 +119,12 @@ def readable(post, subscriptions):
         post["audience"] == "only_subscribers"
         or post["audience"] == "only_paid" and subscription["membership_state"] == "subscribed"
         or post["audience"] == "founding" and subscription["is_founding"])
+
+
+def preview(post, subscriptions):
+    """Whether a post's episode holds only its opening: the owner can't read it, and the episode is our reading
+    of its free opening or Substack's podcast upload, of which readers who don't pay get a few minutes."""
+    return not readable(post, subscriptions) and (post["audio_url"] is None or "/audio/upload/" in post["audio_url"])
 
 
 def awaits_audio(post):
@@ -302,7 +312,8 @@ async def feed_xml(http, store, source, server, article_audio_base, private):
     subscriptions = await owner_subscriptions(http)
     # Built on every request, so episodes Gemini has read show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
-              **({"title": episode_title(post), "url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]} if post["audio_url"]
-                 else articles.read_aloud_episode(episode_title(post) if readable(post, subscriptions) else f"Preview: {episode_title(post)}", post["article"], article_audio_base, private))}
-             for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["audience"] == "everyone")]
+              **({"title": title, "url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]} if post["audio_url"]
+                 else articles.read_aloud_episode(title, post["article"], article_audio_base, private))}
+             for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["audience"] == "everyone")
+             for title in [f"Preview: {episode_title(post)}" if preview(post, subscriptions) else episode_title(post)]]
     return podcast.feed_xml(**channel, items=items)

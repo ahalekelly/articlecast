@@ -405,7 +405,9 @@ async def lifespan(app):
     app.state.silent_frame = await encode_silent_frame()
     app.state.library = Library()
     app.state.syntheses = {}
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), headers={"User-Agent": "Mozilla/5.0 (compatible; Articlecast)"}) as http:
+    # Redirects keep their URLs as sent: requoting them breaks the signatures of signed CDN URLs.
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), requote_redirect_url=False,
+                                     headers={"User-Agent": "Mozilla/5.0 (compatible; Articlecast)"}) as http:
         app.state.http = http
         yield
 
