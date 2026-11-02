@@ -108,10 +108,11 @@ async def provider_stream(http, text, language, voice, style):
     global free_quota_resets
     if MODEL.startswith("MAI-"):
         # MAI reads square brackets as delivery tags: an unknown one is dropped, starts a sentence with a 400, or
-        # stalls a long request. Curly braces also lose words. Parentheses read as written.
+        # stalls a long request. Curly braces also lose words. Parentheses read as written. A pipe fails the
+        # whole request with an empty 400; pipes mostly separate items ("Spotify | YouTube"), so read as commas.
         # The speak element's xml:lang alone does not stop a multilingual voice from reading words that
         # exist in its own language ("Prologue", "Urgent") natively; the lang element does.
-        text = text.translate(str.maketrans("[]{}", "()()"))
+        text = text.translate(str.maketrans("[]{}|", "()(),"))
         styled = f'<mstts:express-as style="{style}">{escape(text)}</mstts:express-as>' if style else escape(text)
         ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="{language}"><voice name="{voice}:{MODEL}"><lang xml:lang="{language}">{styled}</lang></voice></speak>'
         keys = [AZURE_SPEECH_KEY] if time.time() < free_quota_resets else [AZURE_SPEECH_FREE_KEY, AZURE_SPEECH_KEY]
