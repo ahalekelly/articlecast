@@ -234,6 +234,13 @@ def episode_title(post):
     return f"Restack - {post['restacked_from']}: {title}" if post["restacked_from"] else title
 
 
+def episode_audio_url(audio_url, server):
+    """Substack serves podcast uploads as binary/octet-stream from URLs without an extension, which iOS players
+    can't stream, so episodes link to a redirect on `server` whose path ends in .mp3."""
+    upload = re.fullmatch(r"https://api\.substack\.com/api/v1/audio/upload/([0-9a-f-]+)/src(\?.*)?", audio_url)
+    return f"{server}/substack/podcast/{upload[1]}.mp3{upload[2] or ''}" if upload else audio_url
+
+
 def artwork(image):
     """Podcast apps draw transparency black, which hides logos drawn as cut-outs, so Substack's image CDN
     serves the full-size original flattened onto white."""
@@ -280,7 +287,7 @@ async def refresh_author(http, path, handle):
             await refresh_posts(http, path, author_pages(http, user["id"])))
 
 
-async def feed_xml(http, store, source, article_audio_base, private):
+async def feed_xml(http, store, source, server, article_audio_base, private):
     """The feed of `source`, a publication host or an @ and an author's handle. Unless `private`, it leaves out
     posts that need signing in, and posts without Substack audio play a notice instead of being read aloud."""
     started, task = refreshes.get(source, (0, None))
@@ -295,7 +302,7 @@ async def feed_xml(http, store, source, article_audio_base, private):
     subscriptions = await owner_subscriptions(http)
     # Built on every request, so episodes Gemini has read show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
-              **({"title": episode_title(post), "url": post["audio_url"], "size": post["size"], "duration": post["duration"]} if post["audio_url"]
+              **({"title": episode_title(post), "url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]} if post["audio_url"]
                  else articles.read_aloud_episode(episode_title(post) if readable(post, subscriptions) else f"Preview: {episode_title(post)}", post["article"], article_audio_base, private))}
              for post in posts if (post["size"] if post["audio_url"] else post["article"]) and (private or post["audience"] == "everyone")]
     return podcast.feed_xml(**channel, items=items)

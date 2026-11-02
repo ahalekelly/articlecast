@@ -21,7 +21,7 @@ import feedparser
 import trafilatura
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
-from starlette.responses import FileResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 import articles
@@ -329,8 +329,15 @@ def read_aloud_audio(request):
 
 
 async def substack_feed(request):
-    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], *read_aloud_audio(request))
+    xml = await substack.feed_xml(request.app.state.http, STORE / "substack", request.path_params["source"], f"https://{request.url.netloc}",
+                                 *read_aloud_audio(request))
     return Response(xml, media_type="application/rss+xml")
+
+
+async def substack_podcast(request):
+    """Redirects to a Substack podcast upload; see substack.episode_audio_url."""
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(f"https://api.substack.com/api/v1/audio/upload/{request.path_params['upload']}/src{query}", 307)
 
 
 async def tokenless_audio(request):
@@ -410,6 +417,7 @@ app = Starlette(lifespan=lifespan, routes=[
     Route("/substack/{source}/feed.xml", substack_feed),
     Route("/{token}/substack/{source}/feed.xml", substack_feed),
     Route("/audio/{id}.mp3", tokenless_audio, methods=["GET", "HEAD"]),
+    Route("/substack/podcast/{upload:uuid}.mp3", substack_podcast, methods=["GET", "HEAD"]),
     Route("/lesswrong/{slug}/feed.xml", lesswrong_feed),
     Route("/{token}/lesswrong/{slug}/feed.xml", lesswrong_feed),
 ])
