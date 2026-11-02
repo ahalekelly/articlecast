@@ -18,11 +18,11 @@ STORE = Path(os.environ["STORE_DIR"])
 # listen that runs past the estimate is cut off, one that falls short ends in silence.
 WORDS_PER_SECOND = 170 / 60
 ESTIMATE_MARGIN = 1.25
-# 128 kbps CBR at 24 kHz mono: every MP3 frame is 72 * 128000 / 24000 = 384 bytes.
-BYTES_PER_SECOND = 16000
+# 64 kbps CBR at 24 kHz mono: every MP3 frame is 72 * 64000 / 24000 = 192 bytes.
+BYTES_PER_SECOND = 8000
 # Public feeds play this recording instead of reading an article aloud.
 NO_AUDIO_SIZE = Path("no-audio.mp3").stat().st_size
-FRAME_BYTES = 384
+FRAME_BYTES = 192
 BLOCKS = ("p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre")
 
 

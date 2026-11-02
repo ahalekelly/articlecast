@@ -46,7 +46,7 @@ log = logging.getLogger("articlecast")
 
 
 def ffmpeg_args(*input_args):
-    return ["ffmpeg", "-loglevel", "error", *input_args, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "128k",
+    return ["ffmpeg", "-loglevel", "error", *input_args, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k",
             "-write_xing", "0", "-id3v2_version", "0", "-f", "mp3", "pipe:1"]
 
 
