@@ -364,11 +364,14 @@ async def audio(request):
     article = json.loads(article_path(article_id).read_text())
     syntheses = request.app.state.syntheses
     synthesis = syntheses.get(article_id)
-    if request.method == "GET" and (synthesis is None or synthesis.failed):
+    if request.method == "GET" and synthesis is None:
         if user_agent not in SYNTHESIS_USER_AGENTS:
             log.warning("refused synthesis of %s for %r", article_id, user_agent)
             raise HTTPException(403)
         synthesis = syntheses[article_id] = Synthesis(article, request.app.state.silent_frame, request.app.state.http)
+        # A finished reading is served from its file and a failed one starts afresh, so neither keeps its audio
+        # in memory past the readers still streaming it.
+        synthesis.task.add_done_callback(lambda _: syntheses.pop(article_id))
     size = article["size"]
     start, stop = byte_range(range_header, size)
     if not 0 <= start < stop:
