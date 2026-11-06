@@ -133,16 +133,16 @@ def awaits_audio(post):
 
 async def archive_pages(http, host):
     """Pages of a publication's posts, newest first."""
-    offset = 0
+    cursor = ""
     while True:
-        status, body = await substack_get(http, f"https://{host}/api/v1/archive?sort=new&offset={offset}&limit=50")
+        status, body = await substack_get(http, f"https://{host}/api/v1/archive?sort=new&limit=25&cursor={quote(cursor)}")
         if status != 200:
             raise RuntimeError(f"{host} archive API returned {status}")
         page = json.loads(body)
-        if not page:
+        yield page["posts"]
+        cursor = page["nextCursor"]
+        if not cursor:
             return
-        yield page
-        offset += len(page)
 
 
 async def author_pages(http, user_id):
