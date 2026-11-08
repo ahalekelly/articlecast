@@ -1,8 +1,8 @@
 """Podcast feed of a LessWrong author's posts and Quick Takes.
 
 Posts play the narrations TYPE III AUDIO makes for LessWrong. Quick Takes, and posts still without a
-narration an hour after publishing, are saved as articles for Gemini to read; a narration that
-finishes within a week replaces Gemini's reading. Each author's episodes are saved as
+narration an hour after publishing, are saved as articles to read aloud; a narration that
+finishes within a week replaces that reading. Each author's episodes are saved as
 JSON, so episodes stay after they drop out of the author's newest posts.
 """
 
@@ -21,9 +21,9 @@ import podcast
 FEED_REFRESH_SECONDS = 3600
 NEWEST_ITEMS = 50  # posts and Quick Takes fetched per refresh
 NARRATED_SINCE = datetime(2023, 7, 1, tzinfo=UTC).timestamp()  # TYPE III narrates posts from this date
-# A new post waits this long for its TYPE III narration, out of the feed, before Gemini reads it instead.
+# A new post waits this long for its TYPE III narration, out of the feed, before it is read aloud instead.
 NARRATION_WAIT_SECONDS = 3600
-# A post without a narration is looked up again this long, so a late one replaces Gemini's reading.
+# A post without a narration is looked up again this long, so a late one replaces the reading.
 NARRATION_LOOKUP_SECONDS = 7 * 86400
 
 log = logging.getLogger("articlecast")
@@ -116,7 +116,7 @@ async def feed_xml(http, store, slug, article_audio_base, private):
         task.add_done_callback(lambda t: t.exception() and refreshes.pop(slug))
         refreshes[slug] = (time.time(), task)
     user, episodes = await asyncio.shield(task)
-    # Built on every request, so episodes Gemini has read show their final size.
+    # Built on every request, so episodes read aloud show their final size.
     items = [{"description": "", "link": e["url"], "guid": f"lesswrong-{e['id']}", "published": e["published"],
               **({"title": e["title"], **e["audio"]} if e["audio"] else articles.read_aloud_episode(e["title"], e["article"], article_audio_base, private))}
              for e in episodes if not lacks_narration(e, NARRATION_WAIT_SECONDS)]

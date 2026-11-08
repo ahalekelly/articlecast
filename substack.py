@@ -32,7 +32,7 @@ import podcast
 
 FEED_REFRESH_SECONDS = 3600
 TTS_BYTES_PER_SECOND = 6000  # Substack's TTS is 48 kbps CBR
-# A new free post waits this long for Substack's TTS, out of the feed, before Gemini reads it instead.
+# A new free post waits this long for Substack's TTS, out of the feed, before it is read aloud instead.
 TTS_WAIT_SECONDS = 3600
 # The free openings of each feed's newest posts the owner can't read are read aloud when this long.
 PREVIEWS = 10
@@ -310,7 +310,7 @@ async def feed_xml(http, store, source, server, article_audio_base, private):
     # if the client gives up.
     channel, posts = await asyncio.shield(task)
     subscriptions = await owner_subscriptions(http)
-    # Built on every request, so episodes Gemini has read show their final size.
+    # Built on every request, so episodes read aloud show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],
               **({"title": title, "url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]} if post["audio_url"]
                  else articles.read_aloud_episode(title, post["article"], article_audio_base, private))}

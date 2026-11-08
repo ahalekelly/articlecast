@@ -57,8 +57,8 @@ gcloud run deploy articlecast --source . --region us-west1 --use-http2 \
   --max-instances 1 --cpu-throttling --timeout 3600 --allow-unauthenticated \
   --add-volume name=store,type=cloud-storage,bucket=$BUCKET \
   --add-volume-mount volume=store,mount-path=/store \
-  --set-env-vars STORE_DIR=/store,TTS_MODEL=gemini-3.8-flash-tts,TTS_VOICE=Kore \
-  --set-secrets GEMINI_API_KEY=gemini-api-key:latest,FEED_TOKEN=feed-token:latest,SUBSTACK_SID=substack-sid:latest
+  --set-env-vars STORE_DIR=/store,TTS_MODEL=MAI-Voice-2.1,TTS_VOICE=en-US-Harper \
+  --set-secrets AZURE_SPEECH_FREE_KEY=azure-speech-free-key:latest,AZURE_SPEECH_KEY=azure-speech-key:latest,FEED_TOKEN=feed-token:latest,SUBSTACK_SID=substack-sid:latest
 ```
 
 A bucket lifecycle rule deletes audio a week after it is written; a later play reads the article again:

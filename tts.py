@@ -1,7 +1,7 @@
 """The server's text-to-speech model and voice, how text is split into requests, and each provider's
 streaming call. Every provider returns 24 kHz 16-bit mono PCM.
 
-The model and voice match the read-aloud in Adrian's T3 Code fork (apps/mobile/src/lib/speechSettings.ts).
+The models and voices match the read-aloud in Adrian's T3 Code fork (apps/mobile/src/lib/speechSettings.ts).
 """
 
 import logging
