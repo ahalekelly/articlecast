@@ -14,9 +14,8 @@ import lxml.html
 import tts
 
 STORE = Path(os.environ["STORE_DIR"])
-# Gemini Flash reads about 170 words per minute. The estimate runs long on purpose: a first
-# listen that runs past the estimate is cut off, one that falls short ends in silence.
-WORDS_PER_SECOND = 170 / 60
+# The estimate runs long on purpose: a first listen that runs past the estimate is cut off, one
+# that falls short ends in silence.
 ESTIMATE_MARGIN = 1.25
 # 64 kbps CBR at 24 kHz mono: every MP3 frame is 72 * 64000 / 24000 = 192 bytes.
 BYTES_PER_SECOND = 8000
@@ -44,7 +43,7 @@ def chunk_dir(article_id):
 
 
 def estimated_size(words):
-    seconds = words / WORDS_PER_SECOND * ESTIMATE_MARGIN + 5
+    seconds = words / tts.WORDS_PER_MINUTE * 60 * ESTIMATE_MARGIN + 5
     return math.ceil(seconds * BYTES_PER_SECOND / FRAME_BYTES) * FRAME_BYTES
 
 

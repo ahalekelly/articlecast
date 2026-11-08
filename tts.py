@@ -26,11 +26,13 @@ GEMINI_VOICES = (
 # so fr-FR-Marc reading en-US text gives French-accented English.
 MAI_VOICES = ("en-US-Harper", "en-US-Olivia", "en-US-Iris", "en-US-Ethan", "en-US-Grant", "en-US-Jasper", "en-US-Sage",
               "fr-FR-Marc", "fr-FR-Soleil", "fr-FR-Grant", "fr-FR-Harper")
+# Each model's voices and typical reading pace in words per minute. MAI-Voice-2.1-Flash read 62
+# articles at 151 words per minute (115 to 181); MAI-Voice-2.1 is assumed to match it.
 MODELS = {
-    "gemini-3.8-flash-tts": GEMINI_VOICES,
-    "gemini-3.8-flash-lite-tts": GEMINI_VOICES,
-    "MAI-Voice-2.1": MAI_VOICES,
-    "MAI-Voice-2.1-Flash": MAI_VOICES,
+    "gemini-3.8-flash-tts": (GEMINI_VOICES, 170),
+    "gemini-3.8-flash-lite-tts": (GEMINI_VOICES, 170),
+    "MAI-Voice-2.1": (MAI_VOICES, 150),
+    "MAI-Voice-2.1-Flash": (MAI_VOICES, 150),
 }
 MAX_CHUNK_CHARS = 2000  # characters per request
 # Azure Speech region, near the Cloud Run region; MAI voices run only in some regions, and a key works only in its own.
@@ -40,8 +42,9 @@ MODEL = os.environ["TTS_MODEL"]
 VOICE = os.environ["TTS_VOICE"]
 if MODEL not in MODELS:
     raise ValueError(f"TTS_MODEL {MODEL!r} is not one of {', '.join(MODELS)}")
-if VOICE not in MODELS[MODEL]:
-    raise ValueError(f"TTS_VOICE {VOICE!r} is not a {MODEL} voice: {', '.join(MODELS[MODEL])}")
+VOICES, WORDS_PER_MINUTE = MODELS[MODEL]
+if VOICE not in VOICES:
+    raise ValueError(f"TTS_VOICE {VOICE!r} is not a {MODEL} voice: {', '.join(VOICES)}")
 # Names this model and voice's saved audio, so changing either reads articles afresh.
 READER = f"{MODEL}/{VOICE}"
 if MODEL.startswith("MAI-"):
