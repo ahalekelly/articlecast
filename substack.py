@@ -297,9 +297,8 @@ async def refresh_author(http, path, handle):
             await refresh_posts(http, path, author_pages(http, user["id"])))
 
 
-async def feed_xml(http, store, source, server, article_audio_base, private):
-    """The feed of `source`, a publication host or an @ and an author's handle. Unless `private`, it leaves out
-    posts that need signing in, and posts without Substack audio play a notice instead of being read aloud."""
+async def channel_posts(http, store, source):
+    """The channel and posts of `source`, a publication host or an @ and an author's handle, refreshed hourly."""
     started, task = refreshes.get(source, (0, None))
     if time.time() - started > FEED_REFRESH_SECONDS:
         path = store / f"{source}.json"
@@ -308,7 +307,27 @@ async def feed_xml(http, store, source, server, article_audio_base, private):
         refreshes[source] = (time.time(), task)
     # A first refresh pages through the whole archive; shielding it keeps that work for the next request
     # if the client gives up.
-    channel, posts = await asyncio.shield(task)
+    return await asyncio.shield(task)
+
+
+def title_key(title):
+    """A title compared across sites, which differ in case, punctuation, and spacing."""
+    return re.sub(r"\W", "", title.lower())
+
+
+async def episodes_by_title(http, store, source, server):
+    """The enclosures of `source`'s posts with their own whole audio, by title key, for a feed of the same posts
+    published elsewhere."""
+    _, posts = await channel_posts(http, store, source)
+    subscriptions = await owner_subscriptions(http)
+    return {title_key(post["title"]): {"url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]}
+            for post in posts if post["audio_url"] and post["size"] and not preview(post, subscriptions)}
+
+
+async def feed_xml(http, store, source, server, article_audio_base, private):
+    """The feed of `source`. Unless `private`, it leaves out posts that need signing in, and posts without
+    Substack audio play a notice instead of being read aloud."""
+    channel, posts = await channel_posts(http, store, source)
     subscriptions = await owner_subscriptions(http)
     # Built on every request, so episodes read aloud show their final size.
     items = [{"description": post["description"], "link": post["url"], "guid": f"substack-{post['id']}", "published": post["published"],

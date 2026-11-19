@@ -299,9 +299,12 @@ class Synthesis:
             await self.append(piece)
 
 
-def feed_xml(base, channel, listings):
+def feed_xml(base, channel, listings, substack_episodes):
+    """`substack_episodes` holds the enclosures of Substack posts by title key, played in place of reading
+    the article of the same title aloud."""
     items = [{"title": a["title"], "description": "", "link": a["url"], "guid": a["id"], "published": a["published"],
-              **articles.enclosure(a, f"{base}/{TOKEN}/audio")} for a in listings]
+              **(substack_episodes.get(substack.title_key(a["title"])) or articles.enclosure(a, f"{base}/{TOKEN}/audio"))}
+             for a in listings]
     image = channel.get("image", {}).get("href")
     return podcast.feed_xml(title=channel["title"], link=channel.get("link", base), description=channel.get("subtitle", ""),
                             author=channel.get("author", channel["title"]), image=image, items=items)
@@ -315,8 +318,11 @@ def check_token(request):
 async def feed(request):
     check_token(request)
     state = request.app.state
+    base = f"https://{request.url.netloc}"
     channel, listings = await state.library.recent(state.http, request.query_params["url"])
-    return Response(feed_xml(f"https://{request.url.netloc}", channel, listings), media_type="application/rss+xml")
+    publication = request.query_params.get("substack")
+    episodes = await substack.episodes_by_title(state.http, STORE / "substack", publication, base) if publication else {}
+    return Response(feed_xml(base, channel, listings, episodes), media_type="application/rss+xml")
 
 
 def read_aloud_audio(request):
