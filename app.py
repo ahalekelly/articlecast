@@ -299,13 +299,13 @@ class Synthesis:
             await self.append(piece)
 
 
-def feed_xml(base, channel, listings, substack_episodes):
+def feed_xml(base, channel, listings, substack_image, substack_episodes):
     """`substack_episodes` holds the enclosures of Substack posts by title key, played in place of reading
-    the article of the same title aloud."""
+    the article of the same title aloud; `substack_image` is the artwork of feeds without their own."""
     items = [{"title": a["title"], "description": "", "link": a["url"], "guid": a["id"], "published": a["published"],
               **(substack_episodes.get(substack.title_key(a["title"])) or articles.enclosure(a, f"{base}/{TOKEN}/audio"))}
              for a in listings]
-    image = channel.get("image", {}).get("href")
+    image = channel.get("image", {}).get("href") or substack_image
     return podcast.feed_xml(title=channel["title"], link=channel.get("link", base), description=channel.get("subtitle", ""),
                             author=channel.get("author", channel["title"]), image=image, items=items)
 
@@ -321,8 +321,8 @@ async def feed(request):
     base = f"https://{request.url.netloc}"
     channel, listings = await state.library.recent(state.http, request.query_params["url"])
     publication = request.query_params.get("substack")
-    episodes = await substack.episodes_by_title(state.http, STORE / "substack", publication, base) if publication else {}
-    return Response(feed_xml(base, channel, listings, episodes), media_type="application/rss+xml")
+    image, episodes = await substack.crossposts(state.http, STORE / "substack", publication, base) if publication else (None, {})
+    return Response(feed_xml(base, channel, listings, image, episodes), media_type="application/rss+xml")
 
 
 def read_aloud_audio(request):

@@ -315,12 +315,12 @@ def title_key(title):
     return re.sub(r"\W", "", title.lower())
 
 
-async def episodes_by_title(http, store, source, server):
-    """The enclosures of `source`'s posts with their own whole audio, by title key, for a feed of the same posts
-    published elsewhere."""
-    _, posts = await channel_posts(http, store, source)
+async def crossposts(http, store, source, server):
+    """`source`'s artwork, and the enclosures of its posts with their own whole audio by title key, for a feed of
+    the same posts published elsewhere."""
+    channel, posts = await channel_posts(http, store, source)
     subscriptions = await owner_subscriptions(http)
-    return {title_key(post["title"]): {"url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]}
+    return channel["image"], {title_key(post["title"]): {"url": episode_audio_url(post["audio_url"], server), "size": post["size"], "duration": post["duration"]}
             for post in posts if post["audio_url"] and post["size"] and not preview(post, subscriptions)}
 
 

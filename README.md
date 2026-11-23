@@ -4,7 +4,7 @@ Podcast feeds of articles from RSS feeds, read aloud by Gemini 3.8 Flash TTS or 
 
 ## How it works
 
-- `https://<host>/<token>/rss/feed.xml?url=<RSS feed URL>` is a podcast of every article seen in one RSS feed, with text extracted by trafilatura and an estimated audio size. Articles stay after they drop out of the RSS feed, but history starts with what the RSS feed held when first requested. Adding `&substack=<publication host or @handle>` plays Substack's audio for articles also posted there under the same title, for a blog that crossposts some posts to Substack.
+- `https://<host>/<token>/rss/feed.xml?url=<RSS feed URL>` is a podcast of every article seen in one RSS feed, with text extracted by trafilatura and an estimated audio size. Articles stay after they drop out of the RSS feed, but history starts with what the RSS feed held when first requested. Adding `&substack=<publication host or @handle>` plays Substack's audio for articles also posted there under the same title, for a blog that crossposts some posts to Substack, and uses its artwork if the RSS feed has none.
 - The first download from the Pocket Casts app starts synthesis. Audio streams to the phone as it is read, in requests of whole sentences up to 2,000 characters, and is padded with silence to the estimated size. A failed request is retried after 1, 3, and 8 seconds.
 - Reading stays 10 minutes ahead of the furthest byte requested, so a player that streams and stops pulling pauses it while a download runs it at full speed.
 - Each finished request's audio is saved, so a reading that stalls or restarts continues at the next request, with the same bytes as before.
